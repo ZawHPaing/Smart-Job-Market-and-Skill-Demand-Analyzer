@@ -205,3 +205,57 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+backend/data_pipeline/data/bls_excel/all_data_M_2014.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2015.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2016.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2017.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2018.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2019.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2020.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2021.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2022.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2023.xlsx
+backend/data_pipeline/data/bls_excel/all_data_M_2024.xlsx
+backend/data_pipeline/data/bls_excel/all_oes_data_2012.xlsx
+backend/data_pipeline/data/bls_excel/oes_data_2011.xlsx
+backend/data_pipeline/data/bls_excel/oes_data_2013.xlsx
+backend/data_pipeline/data/Employment&Salary/all_data_M_2014.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2015.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2016.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2017.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2018.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2019.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2020.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2021.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2022.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2023.csv
+backend/data_pipeline/data/Employment&Salary/all_data_M_2024.csv
+backend/data_pipeline/data/Employment&Salary/all_oes_data_2012.csv
+backend/data_pipeline/data/Employment&Salary/oes_data_2011.csv
+backend/data_pipeline/data/Employment&Salary/oes_data_2013.csv
+backend/data_pipeline/data/db_30_1_excel/Tools Used.csv
+backend/data_pipeline/data/db_30_1_excel/Technology Skills.csv
+backend/data_pipeline/data/db_30_1_excel/Task Statements.csv
+backend/data_pipeline/data/db_30_1_excel/Skills.csv
+backend/data_pipeline/data/db_30_1_excel/Related Occupations.csv
+backend/data_pipeline/data/db_30_1_excel/Occupation Data.csv
+backend/data_pipeline/data/db_30_1_excel/Education, Training, and Experience.csv
+backend/data_pipeline/data/db_30_1_excel/Content Model Reference.csv
+backend/data_pipeline/data/db_30_1_excel/Alternate Titles.csv
+backend/data_pipeline/data/db_30_1_excel/Knowledge.csv
+backend/data_pipeline/data/onet/Abilities.xlsx
+backend/data_pipeline/data/onet/All_Industries.xlsx
+backend/data_pipeline/data/onet/Alternate Titles.xlsx
+backend/data_pipeline/data/onet/Content Model Reference.xlsx
+backend/data_pipeline/data/onet/Education, Training, and Experience.xlsx
+backend/data_pipeline/data/onet/Knowledge.xlsx
+backend/data_pipeline/data/db_30_1_excel/Abilities.csv
+backend/data_pipeline/data/db_30_1_excel/All_Industries.csv
+backend/data_pipeline/data/db_30_1_excel/Work Activities.csv
+backend/data_pipeline/data/onet/Occupation Data.xlsx
+backend/data_pipeline/data/onet/Skills.xlsx
+backend/data_pipeline/data/onet/Work Activities.xlsx
+backend/data_pipeline/data/onet/Tools Used.xlsx
+backend/data_pipeline/data/onet/Technology Skills.xlsx
+backend/data_pipeline/data/onet/Task Statements.xlsx
+backend/data_pipeline/data/onet/Related Occupations.xlsx

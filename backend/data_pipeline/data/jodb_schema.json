@@ -1,0 +1,185 @@
+{
+  "database": "jobdb",
+  "collections": [
+    {
+      "name": "onet_content_model",
+      "fields": {
+        "_id": "ObjectId",
+        "element_id": "String",
+        "element_name": "String",
+        "description": "String"
+      }
+    },
+    {
+      "name": "onet_tasks",
+      "fields": {
+        "_id": "ObjectId",
+        "task_id": "Integer",
+        "onet_soc": "String",
+        "title": "String",
+        "task": "String",
+        "task_type": "String | Double"
+      }
+    },
+    {
+      "name": "skills",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "element_id": "String",
+        "element_name": "String",
+        "title": "String",
+        "scale_id": "String",
+        "scale_name": "String",
+        "data_value": "Double",
+        "n": "Integer",
+        "date": "String"
+      }
+    },
+    {
+      "name": "onet_alternate_titles",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "title": "String",
+        "alternate_title": "String"
+      }
+    },
+    {
+      "name": "related_occupations",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "related_onet_soc": "String",
+        "title": "String",
+        "related_title": "String",
+        "relatedness_tier": "String",
+        "rank_index": "Integer"
+      }
+    },
+    {
+      "name": "all_industries",
+      "fields": {
+        "_id": "ObjectId",
+        "code": "String",
+        "occupation": "String",
+        "industries": "String",
+        "projected_job_openings": "Integer",
+        "projected_growth": "String"
+      }
+    },
+    {
+      "name": "education_training_experience",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "element_id": "String",
+        "element_name": "String",
+        "title": "String",
+        "scale_id": "String",
+        "scale_name": "String",
+        "category": "Double",
+        "data_value": "Double",
+        "n": "Integer",
+        "date": "String"
+      }
+    },
+    {
+      "name": "abilities",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "element_id": "String",
+        "element_name": "String",
+        "title": "String",
+        "scale_id": "String",
+        "scale_name": "String",
+        "data_value": "Double",
+        "n": "Integer",
+        "date": "Date | String"
+      }
+    },
+    {
+      "name": "work_activities",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "element_id": "String",
+        "element_name": "String",
+        "title": "String",
+        "scale_id": "String",
+        "scale_name": "String",
+        "data_value": "Double",
+        "n": "Double",
+        "date": "String"
+      }
+    },
+    {
+      "name": "tools_used",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "commodity_code": "Integer",
+        "commodity_title": "String",
+        "title": "String",
+        "example": "String"
+      }
+    },
+    {
+      "name": "knowledge",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "element_id": "String",
+        "element_name": "String",
+        "title": "String",
+        "scale_id": "String",
+        "scale_name": "String",
+        "data_value": "Double",
+        "n": "Double",
+        "date": "String"
+      }
+    },
+    {
+      "name": "occupations",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "title": "String",
+        "description": "String"
+      }
+    },
+    {
+      "name": "technology_skills",
+      "fields": {
+        "_id": "ObjectId",
+        "onet_soc": "String",
+        "commodity_code": "Integer",
+        "commodity_title": "String",
+        "title": "String",
+        "example": "String",
+        "hot_technology": "Boolean",
+        "in_demand": "Boolean"
+      }
+    },
+    {
+      "name": "bls_oews",
+      "fields": {
+        "_id": "ObjectId",
+        "year": "Integer",
+        "occ_code": "String",
+        "occ_title": "String",
+        "own_code": "Integer",
+        "naics": "String",
+        "naics_title": "String",
+        "tot_emp": "Integer | String",
+        "h_mean": "String",
+        "h_median": "String",
+        "a_mean": "Integer | String",
+        "a_median": "Integer | String",
+        "emp_prse": "String",
+        "mean_prse": "String"
+      }
+    }
+  ]
+}

@@ -1,9 +1,34 @@
+# FastAPI & Web Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pymongo==4.6.0
-neo4j==5.16.0
 python-dotenv==1.0.0
+aiofiles==23.2.1
+
+# Database
+pymongo==4.6.0
+motor==3.3.2
+neo4j==5.16.0
+
+# Data Validation
 pydantic==2.5.0
 pydantic-settings==2.1.0
-motor==3.3.2
-aiofiles==23.2.1
+
+# Data Processing
+pandas==2.0.3
+numpy==1.24.3
+scipy==1.11.3
+
+pandas openpyxl==3.1.5
+
+# NLP & Machine Learning
+torch==2.1.0
+transformers==4.35.2
+huggingface-hub==0.20.3
+sentence-transformers==2.2.2
+spacy==3.7.2
+scikit-learn==1.3.2
+
+
+# Utilities
+tqdm==4.66.1
+joblib==1.3.2

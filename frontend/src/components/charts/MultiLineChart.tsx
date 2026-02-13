@@ -1,0 +1,101 @@
+import {
+  LineChart as RechartsLineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
+
+interface MultiLineChartProps {
+  data: Record<string, any>[];
+  lines: {
+    key: string;
+    name: string;
+    color: string;
+  }[];
+  xAxisKey: string;
+  height?: number;
+  formatYAxis?: (value: number) => string;
+}
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="glass-card px-3 py-2">
+        <p className="text-sm font-medium mb-2">{label}</p>
+        {payload.map((entry: any, index: number) => (
+          <p key={index} className="text-sm flex items-center gap-2">
+            <span
+              className="w-2 h-2 rounded-full"
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-muted-foreground">{entry.name}: </span>
+            <span className="font-medium" style={{ color: entry.color }}>
+              {typeof entry.value === 'number'
+                ? entry.value >= 1000000
+                  ? `${(entry.value / 1000000).toFixed(1)}M`
+                  : entry.value >= 1000
+                  ? `${(entry.value / 1000).toFixed(0)}K`
+                  : entry.value.toLocaleString()
+                : entry.value}
+            </span>
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+export function MultiLineChart({
+  data,
+  lines,
+  xAxisKey,
+  height = 300,
+  formatYAxis = (v) => (v >= 1000000 ? `${v / 1000000}M` : v >= 1000 ? `${v / 1000}K` : v.toString()),
+}: MultiLineChartProps) {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <RechartsLineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 20%)" />
+        <XAxis
+          dataKey={xAxisKey}
+          tick={{ fill: 'hsl(0 0% 65%)', fontSize: 12 }}
+          axisLine={{ stroke: 'hsl(0 0% 20%)' }}
+          tickLine={{ stroke: 'hsl(0 0% 20%)' }}
+        />
+        <YAxis
+          tick={{ fill: 'hsl(0 0% 65%)', fontSize: 12 }}
+          axisLine={{ stroke: 'hsl(0 0% 20%)' }}
+          tickLine={{ stroke: 'hsl(0 0% 20%)' }}
+          tickFormatter={formatYAxis}
+        />
+        <Tooltip content={<CustomTooltip />} />
+        <Legend
+          verticalAlign="bottom"
+          iconType="circle"
+          iconSize={8}
+          formatter={(value) => (
+            <span className="text-sm text-muted-foreground">{value}</span>
+          )}
+        />
+        {lines.map((line) => (
+          <Line
+            key={line.key}
+            type="monotone"
+            dataKey={line.key}
+            name={line.name}
+            stroke={line.color}
+            strokeWidth={2}
+            dot={{ fill: line.color, strokeWidth: 0, r: 4 }}
+            activeDot={{ r: 6, stroke: line.color, strokeWidth: 2, fill: 'hsl(0 0% 10%)' }}
+            animationDuration={1500}
+          />
+        ))}
+      </RechartsLineChart>
+    </ResponsiveContainer>
+  );
+}
