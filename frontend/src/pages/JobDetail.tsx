@@ -21,18 +21,10 @@ const fmtK = (n: number) => `${Math.round(n / 1000)}K`;
 const fmtPercent = (n: number) => `${Math.round(n)}%`;
 
 const JobDetail = () => {
-  // 🔍 DEBUG: Get URL parameters
-  const params = useParams<{ id: string }>();
-  console.log('📌 Full URL params:', params);
-  
-  // ✅ FIX: Use 'id' since that's what's in the route (/jobs/:id)
-  const { id } = params;
-  const occ_code = id; // This is your occupation code
-  
-  console.log('📌 occ_code from URL:', occ_code);
+  const { id } = useParams<{ id: string }>();
+  const occ_code = id;
   
   const [skillSort, setSkillSort] = useState('importance');
-  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [jobDetail, setJobDetail] = useState<JobDetailResponse | null>(null);
@@ -41,9 +33,7 @@ const JobDetail = () => {
     let cancelled = false;
 
     async function loadJobDetail() {
-      // 🔍 DEBUG: Check if we have an occ_code
       if (!occ_code) {
-        console.error('❌ No occ_code provided in URL params!');
         setError('No job code provided in URL');
         setLoading(false);
         return;
@@ -52,18 +42,11 @@ const JobDetail = () => {
       setLoading(true);
       setError(null);
 
-      // 🔍 DEBUG: Log the API call
-      console.log('🟡 Loading job detail for occ_code:', occ_code);
-      console.log('🟡 API URL:', `/job-detail/${encodeURIComponent(occ_code)}`);
-      console.log('🟡 Full API endpoint:', `${import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000/api'}/job-detail/${encodeURIComponent(occ_code)}`);
-
       try {
         const data = await JobDetailAPI.get(occ_code);
-        console.log('🟢 Job detail loaded successfully:', data);
         if (cancelled) return;
         setJobDetail(data);
       } catch (e: any) {
-        console.error('🔴 Job detail error:', e);
         if (cancelled) return;
         setError(e?.message || 'Failed to load job details');
       } finally {
@@ -73,20 +56,14 @@ const JobDetail = () => {
     }
 
     loadJobDetail();
-    return () => { 
-      console.log('🟡 Cancelling job detail request for:', occ_code);
-      cancelled = true; 
-    };
+    return () => { cancelled = true; };
   }, [occ_code]);
 
   // Transform metrics for MetricsGrid component
   const metricsGridData = useMemo(() => {
     if (!jobDetail?.metrics) return [];
     
-    console.log('📊 Processing metrics:', jobDetail.metrics);
-    
     return jobDetail.metrics.map((metric: JobMetric) => {
-      // Format value based on format type
       let formattedValue = metric.value;
       if (metric.format === 'fmtK' && typeof metric.value === 'number') {
         formattedValue = fmtK(metric.value);
@@ -111,7 +88,6 @@ const JobDetail = () => {
   // Format skills for chart
   const jobSkills = useMemo(() => {
     if (!jobDetail?.skills) return [];
-    console.log('🔧 Processing skills:', jobDetail.skills.length);
     return jobDetail.skills.slice(0, 8).map(skill => ({
       name: skill.name.length > 30 ? skill.name.substring(0, 30) + '...' : skill.name,
       value: Math.round(skill.value),
@@ -138,23 +114,12 @@ const JobDetail = () => {
   // Knowledge
   const knowledge = jobDetail?.knowledge?.slice(0, 4) || [];
 
-  // 🔍 DEBUG: Render state
-  console.log('📊 Current state:', { 
-    loading, 
-    error, 
-    hasData: !!jobDetail,
-    jobTitle: jobDetail?.occ_title,
-    metricsCount: jobDetail?.metrics?.length,
-    skillsCount: jobDetail?.skills?.length 
-  });
-
   if (loading) {
     return (
       <DashboardLayout>
         <div className="flex flex-col items-center justify-center h-64 space-y-4">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan"></div>
-          <div className="text-muted-foreground">Loading job details for {occ_code}...</div>
-          <div className="text-xs text-muted-foreground">Check console for debug info</div>
+          <div className="text-muted-foreground">Loading job details...</div>
         </div>
       </DashboardLayout>
     );
@@ -176,13 +141,6 @@ const JobDetail = () => {
               <div className="space-y-2">
                 <p className="text-coral font-semibold">Error Loading Job Details</p>
                 <p className="text-sm text-muted-foreground">{error || 'Job not found'}</p>
-                <p className="text-xs text-muted-foreground mt-4">Job Code: {occ_code}</p>
-                <button 
-                  onClick={() => window.location.reload()} 
-                  className="mt-4 px-4 py-2 bg-secondary/50 rounded-lg text-sm hover:bg-secondary/70 transition-colors"
-                >
-                  Retry
-                </button>
               </div>
             </CardContent>
           </Card>
@@ -428,33 +386,6 @@ const JobDetail = () => {
                   </Badge>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Debug Info - Remove in production */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="glass-card border-amber/30">
-            <CardHeader>
-              <SectionHeader title="Debug Info" subtitle="Remove in production" />
-            </CardHeader>
-            <CardContent>
-              <pre className="text-xs bg-black/10 p-4 rounded-lg overflow-auto max-h-96">
-                {JSON.stringify(
-                  {
-                    occ_code,
-                    job_title: jobDetail.occ_title,
-                    metrics_count: jobDetail.metrics.length,
-                    skills_count: jobDetail.skills.length,
-                    tech_skills_count: jobDetail.tech_skills.length,
-                    activities_count: jobDetail.activities.length,
-                    abilities_count: jobDetail.abilities.length,
-                    has_education: !!jobDetail.education,
-                  },
-                  null,
-                  2
-                )}
-              </pre>
             </CardContent>
           </Card>
         )}
