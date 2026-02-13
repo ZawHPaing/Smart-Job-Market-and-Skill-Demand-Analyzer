@@ -20,6 +20,16 @@ import type { JobDetailResponse, JobMetric, JobSkill, JobAbility, JobKnowledge }
 const fmtK = (n: number) => `${Math.round(n / 1000)}K`;
 const fmtPercent = (n: number) => `${Math.round(n)}%`;
 
+// Helper function to generate skill ID for routing
+const getSkillId = (skillName: string): string => {
+  return skillName
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '') // Remove special characters
+    .replace(/\s+/g, '_') // Replace spaces with underscores
+    .replace(/_+/g, '_') // Replace multiple underscores with single
+    .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
+};
+
 const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
   const occ_code = id;
@@ -42,12 +52,16 @@ const JobDetail = () => {
       setLoading(true);
       setError(null);
 
+      console.log('🟡 Loading job detail for:', occ_code);
+
       try {
         const data = await JobDetailAPI.get(occ_code);
         if (cancelled) return;
         setJobDetail(data);
+        console.log('🟢 Job detail loaded:', data);
       } catch (e: any) {
         if (cancelled) return;
+        console.error('🔴 Job detail error:', e);
         setError(e?.message || 'Failed to load job details');
       } finally {
         if (cancelled) return;
@@ -119,7 +133,7 @@ const JobDetail = () => {
       <DashboardLayout>
         <div className="flex flex-col items-center justify-center h-64 space-y-4">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan"></div>
-          <div className="text-muted-foreground">Loading job details...</div>
+          <div className="text-muted-foreground">Loading job details for {occ_code}...</div>
         </div>
       </DashboardLayout>
     );
@@ -141,6 +155,13 @@ const JobDetail = () => {
               <div className="space-y-2">
                 <p className="text-coral font-semibold">Error Loading Job Details</p>
                 <p className="text-sm text-muted-foreground">{error || 'Job not found'}</p>
+                <p className="text-xs text-muted-foreground mt-2">Job Code: {occ_code}</p>
+                <Link 
+                  to="/jobs" 
+                  className="inline-block mt-4 px-4 py-2 bg-secondary/50 rounded-lg text-sm hover:bg-secondary/70 transition-colors"
+                >
+                  Browse All Jobs
+                </Link>
               </div>
             </CardContent>
           </Card>
@@ -237,37 +258,53 @@ const JobDetail = () => {
               {techSkills.length > 0 ? (
                 <>
                   <div className="flex flex-wrap gap-2">
-                    {techSkills.map((skill) => (
-                      <Badge
-                        key={skill.name}
-                        variant="secondary"
-                        className={`px-3 py-2 text-sm ${
-                          skill.hot_technology 
-                            ? 'bg-cyan/10 text-cyan border-cyan/20 hover:bg-cyan/20' 
-                            : 'bg-secondary/30'
-                        } cursor-pointer transition-colors`}
-                      >
-                        {skill.name}
-                        {skill.hot_technology && (
-                          <span className="ml-2 text-xs text-cyan">🔥</span>
-                        )}
-                      </Badge>
-                    ))}
+                    {techSkills.map((skill) => {
+                      const skillId = getSkillId(skill.name);
+                      return (
+                        <Link 
+                          key={skill.name} 
+                          to={`/skills/${skillId}`}
+                          className="inline-block"
+                        >
+                          <Badge
+                            variant="secondary"
+                            className={`px-3 py-2 text-sm ${
+                              skill.hot_technology 
+                                ? 'bg-cyan/10 text-cyan border-cyan/20 hover:bg-cyan/20' 
+                                : 'bg-secondary/30 hover:bg-secondary/50'
+                            } cursor-pointer transition-colors`}
+                          >
+                            {skill.name}
+                            {skill.hot_technology && (
+                              <span className="ml-2 text-xs text-cyan">🔥</span>
+                            )}
+                          </Badge>
+                        </Link>
+                      );
+                    })}
                   </div>
 
                   {softSkills.length > 0 && (
                     <div className="mt-6">
                       <h4 className="text-sm font-medium mb-3">Soft Skills</h4>
                       <div className="flex flex-wrap gap-2">
-                        {softSkills.map((skill) => (
-                          <Badge
-                            key={skill.name}
-                            variant="outline"
-                            className="px-3 py-2 text-sm"
-                          >
-                            {skill.name}
-                          </Badge>
-                        ))}
+                        {softSkills.map((skill) => {
+                          const skillId = getSkillId(skill.name);
+                          return (
+                            <Link 
+                              key={skill.name} 
+                              to={`/skills/${skillId}`}
+                              className="inline-block"
+                            >
+                              <Badge
+                                variant="outline"
+                                className="px-3 py-2 text-sm hover:bg-secondary/40 cursor-pointer transition-colors"
+                              >
+                                {skill.name}
+                              </Badge>
+                            </Link>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -316,21 +353,27 @@ const JobDetail = () => {
             <CardContent>
               {abilities.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  {abilities.map((ability) => (
-                    <div
-                      key={ability.name}
-                      className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                    >
-                      <p className="font-medium text-sm">{ability.name}</p>
-                      <p className="text-xs text-muted-foreground">{ability.category}</p>
-                      <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
-                        <div 
-                          className="bg-cyan rounded-full h-1" 
-                          style={{ width: `${ability.value}%` }}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                  {abilities.map((ability) => {
+                    const skillId = getSkillId(ability.name);
+                    return (
+                      <Link 
+                        key={ability.name} 
+                        to={`/skills/${skillId}`}
+                        className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
+                      >
+                        <p className="font-medium text-sm group-hover:text-cyan transition-colors">
+                          {ability.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{ability.category}</p>
+                        <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
+                          <div 
+                            className="bg-cyan rounded-full h-1" 
+                            style={{ width: `${ability.value}%` }}
+                          />
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-muted-foreground text-center py-8">
@@ -342,17 +385,21 @@ const JobDetail = () => {
                 <div className="mt-6">
                   <h4 className="text-sm font-medium mb-3">Necessary Knowledge</h4>
                   <div className="space-y-2">
-                    {knowledge.map((k) => (
-                      <div
-                        key={k.name}
-                        className="flex items-center justify-between p-2 rounded bg-secondary/20"
-                      >
-                        <span className="text-sm">{k.name}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {k.level}
-                        </Badge>
-                      </div>
-                    ))}
+                    {knowledge.map((k) => {
+                      const skillId = getSkillId(k.name);
+                      return (
+                        <Link
+                          key={k.name}
+                          to={`/skills/${skillId}`}
+                          className="flex items-center justify-between p-2 rounded bg-secondary/20 hover:bg-secondary/30 transition-colors group"
+                        >
+                          <span className="text-sm group-hover:text-cyan transition-colors">{k.name}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {k.level}
+                          </Badge>
+                        </Link>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -371,20 +418,52 @@ const JobDetail = () => {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                {jobDetail.tools.map((tool) => (
-                  <Badge
-                    key={tool.name}
-                    variant="outline"
-                    className="px-3 py-2 text-sm bg-secondary/20"
-                  >
-                    {tool.name}
-                    {tool.commodity_title && (
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {tool.commodity_title}
-                      </span>
-                    )}
-                  </Badge>
-                ))}
+                {jobDetail.tools.map((tool) => {
+                  const skillId = getSkillId(tool.name);
+                  return (
+                    <Link 
+                      key={tool.name} 
+                      to={`/skills/${skillId}`}
+                      className="inline-block"
+                    >
+                      <Badge
+                        variant="outline"
+                        className="px-3 py-2 text-sm bg-secondary/20 hover:bg-secondary/30 cursor-pointer transition-colors"
+                      >
+                        {tool.name}
+                        {tool.commodity_title && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {tool.commodity_title}
+                          </span>
+                        )}
+                      </Badge>
+                    </Link>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Debug Info - Only in development */}
+        {process.env.NODE_ENV === 'development' && (
+          <Card className="glass-card border-amber/30">
+            <CardHeader>
+              <SectionHeader title="Debug Info" subtitle="Remove in production" />
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-1 text-xs">
+                <p><span className="font-bold">Job Code:</span> {jobDetail.occ_code}</p>
+                <p><span className="font-bold">Job Title:</span> {jobDetail.occ_title}</p>
+                <p><span className="font-bold">SOC Code:</span> {jobDetail.basic_info.soc_code || 'N/A'}</p>
+                <p><span className="font-bold">Skills Count:</span> {jobDetail.skills.length}</p>
+                <p><span className="font-bold">Tech Skills:</span> {jobDetail.tech_skills.length}</p>
+                <p><span className="font-bold">Soft Skills:</span> {jobDetail.soft_skills.length}</p>
+                <p><span className="font-bold">Activities:</span> {jobDetail.activities.length}</p>
+                <p><span className="font-bold">Abilities:</span> {jobDetail.abilities.length}</p>
+                <p><span className="font-bold">Knowledge:</span> {jobDetail.knowledge.length}</p>
+                <p><span className="font-bold">Tools:</span> {jobDetail.tools.length}</p>
+                <p><span className="font-bold">Has Education:</span> {jobDetail.education ? 'Yes' : 'No'}</p>
               </div>
             </CardContent>
           </Card>
