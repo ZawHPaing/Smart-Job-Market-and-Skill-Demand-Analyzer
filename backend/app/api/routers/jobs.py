@@ -37,20 +37,22 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 @router.get("/", response_model=JobListResponse)
 async def list_jobs(
     year: Optional[int] = Query(None, description="If omitted, uses latest year"),
-    group: Optional[str] = Query(None, description="Filter by SOC group (detail, major, total)"),
+    group: Optional[str] = Query(None, description="Filter by SOC group"),
     search: Optional[str] = Query(None, description="Search by job title"),
     limit: int = Query(1000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
+    only_with_details: bool = Query(True, description="Only show jobs with O*NET data"),  # ADD THIS
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobListResponse:
-    """List all jobs/occupations with pagination and search"""
+    """List all jobs/occupations - only those with O*NET data by default"""
     repo = JobsRepo(db)
     y, jobs = await repo.list_jobs(
         year=year, 
         group=group, 
         search=search,
         limit=limit, 
-        offset=offset
+        offset=offset,
+        only_with_details=only_with_details  # PASS IT HERE
     )
     
     if not jobs:

@@ -48,7 +48,7 @@ class JobsRepo:
         return int(doc["year"]) if doc else None
     
     # -------------------------
-    # Jobs list / search
+    # Jobs list / search - WITH OPTION 1 FILTERING
     # -------------------------
     async def list_jobs(
         self, 
@@ -56,15 +56,42 @@ class JobsRepo:
         group: Optional[str] = None,
         search: Optional[str] = None,
         limit: int = 1000,
-        offset: int = 0
+        offset: int = 0,
+        only_with_details: bool = True  # ADD THIS PARAMETER
     ) -> Tuple[int, List[Dict[str, Any]]]:
         """
-        Get list of unique occupations - uses cross-industry data (naics: "000000")
+        Get list of unique occupations - only those with O*NET data
         """
         if year is None:
             year = await self._latest_year()
             if year is None:
                 return 0, []
+        
+        # First, get all O*NET SOC codes that have data
+        onet_socs = set()
+        
+        if only_with_details:
+            # Get all SOC codes that have skills
+            cursor = await self.db["skills"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            # Also include those with tech skills
+            cursor = await self.db["technology_skills"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            # Include abilities
+            cursor = await self.db["abilities"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            # Include knowledge
+            cursor = await self.db["knowledge"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            # Include work activities
+            cursor = await self.db["work_activities"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            print(f"📊 Found {len(onet_socs)} O*NET SOC codes with data")
         
         # Use cross-industry data
         match_q = {
@@ -78,6 +105,22 @@ class JobsRepo:
             match_q["group"] = group
         if search:
             match_q["occ_title"] = {"$regex": search, "$options": "i"}
+        
+        # Only include jobs that map to O*NET SOCs with data
+        if only_with_details and onet_socs:
+            # Convert O*NET SOC codes to BLS format (remove .00)
+            bls_codes = []
+            for soc in onet_socs:
+                if soc and isinstance(soc, str):
+                    # Convert "15-1252.00" to "15-1252"
+                    bls_code = soc.replace(".00", "")
+                    bls_codes.append(bls_code)
+            
+            if bls_codes:
+                # Remove duplicates
+                bls_codes = list(set(bls_codes))
+                match_q["occ_code"] = {"$in": bls_codes}
+                print(f"📊 Filtering to {len(bls_codes)} BLS codes with O*NET data")
         
         # Simple distinct query
         pipeline = [
@@ -106,28 +149,54 @@ class JobsRepo:
                 "median_salary": _to_float(doc.get("a_median")) or None,
             })
         
+        print(f"📊 Returning {len(rows)} jobs")
         return int(year), rows
     
     async def search_jobs(
         self,
         query: str,
         year: Optional[int] = None,
-        limit: int = 20
+        limit: int = 20,
+        only_with_details: bool = True  # ADD THIS PARAMETER
     ) -> List[Dict[str, Any]]:
-        _, jobs = await self.list_jobs(year=year, search=query, limit=limit, offset=0)
+        _, jobs = await self.list_jobs(
+            year=year, 
+            search=query, 
+            limit=limit, 
+            offset=0,
+            only_with_details=only_with_details
+        )
         return jobs
     
     # -------------------------
-    # Top jobs
+    # Top jobs - WITH OPTION 1 FILTERING
     # -------------------------
     async def top_jobs(
         self,
         year: int,
         limit: int = 10,
         by: Literal["employment", "salary"] = "employment",
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        only_with_details: bool = True  # ADD THIS PARAMETER
     ) -> List[Dict[str, Any]]:
-        """Top jobs from cross-industry data"""
+        """Top jobs from cross-industry data - only those with O*NET data"""
+        
+        # First, get all O*NET SOC codes that have data
+        onet_socs = set()
+        
+        if only_with_details:
+            # Get all SOC codes that have skills
+            cursor = await self.db["skills"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            # Also include those with tech skills
+            cursor = await self.db["technology_skills"].distinct("onet_soc")
+            onet_socs.update(cursor)
+            
+            # Include abilities
+            cursor = await self.db["abilities"].distinct("onet_soc")
+            onet_socs.update(cursor)
+        
         match_q = {
             "year": int(year),
             "naics": "000000",  # Use cross-industry data
@@ -136,6 +205,19 @@ class JobsRepo:
         
         if group:
             match_q["group"] = group
+        
+        # Only include jobs that map to O*NET SOCs with data
+        if only_with_details and onet_socs:
+            # Convert O*NET SOC codes to BLS format (remove .00)
+            bls_codes = []
+            for soc in onet_socs:
+                if soc and isinstance(soc, str):
+                    bls_code = soc.replace(".00", "")
+                    bls_codes.append(bls_code)
+            
+            if bls_codes:
+                bls_codes = list(set(bls_codes))
+                match_q["occ_code"] = {"$in": bls_codes}
         
         pipeline = [
             {"$match": match_q},
@@ -170,23 +252,42 @@ class JobsRepo:
         self,
         year: int,
         limit: int = 10,
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        only_with_details: bool = True  # ADD THIS PARAMETER
     ) -> List[Dict[str, Any]]:
-        """Top jobs - no growth calculation for now"""
-        return await self.top_jobs(year=year, limit=limit, by="employment", group=group)
+        """Top jobs - with O*NET data only"""
+        return await self.top_jobs(
+            year=year, 
+            limit=limit, 
+            by="employment", 
+            group=group,
+            only_with_details=only_with_details
+        )
     
     # -------------------------
-    # Dashboard metrics
+    # Dashboard metrics - MODIFIED to use only jobs with details
     # -------------------------
-    async def dashboard_metrics(self, year: int) -> Dict[str, Any]:
-        """Dashboard metrics from cross-industry data"""
+    async def dashboard_metrics(self, year: int, only_with_details: bool = True) -> Dict[str, Any]:
+        """Dashboard metrics from cross-industry data - only jobs with O*NET data"""
+        
+        # First, get filtered job list
+        _, jobs = await self.list_jobs(
+            year=year, 
+            limit=10000, 
+            offset=0, 
+            only_with_details=only_with_details
+        )
+        
+        # Extract job codes
+        job_codes = [job["occ_code"] for job in jobs]
+        
         # Count unique occupations
         pipeline_count = [
             {
                 "$match": {
                     "year": int(year),
-                    "naics": "000000",  # Use cross-industry data
-                    "occ_code": {"$ne": "00-0000"},
+                    "naics": "000000",
+                    "occ_code": {"$in": job_codes, "$ne": "00-0000"},
                     "occ_title": {"$ne": None}
                 }
             },
@@ -202,8 +303,8 @@ class JobsRepo:
             {
                 "$match": {
                     "year": int(year),
-                    "naics": "000000",  # Use cross-industry data
-                    "occ_code": {"$ne": "00-0000"},
+                    "naics": "000000",
+                    "occ_code": {"$in": job_codes, "$ne": "00-0000"},
                     "tot_emp": {"$ne": None, "$ne": ""}
                 }
             },
@@ -241,8 +342,8 @@ class JobsRepo:
             {
                 "$match": {
                     "year": int(year),
-                    "naics": "000000",  # Use cross-industry data
-                    "occ_code": {"$ne": "00-0000"},
+                    "naics": "000000",
+                    "occ_code": {"$in": job_codes, "$ne": "00-0000"},
                     "a_median": {"$ne": None, "$ne": ""}
                 }
             },
@@ -300,20 +401,21 @@ class JobsRepo:
         }
     
     # -------------------------
-    # Top jobs trends - SIMPLIFIED to avoid errors
+    # Top jobs trends - SIMPLIFIED
     # -------------------------
     async def top_jobs_trends(
         self,
         year_from: int,
         year_to: int,
         limit: int = 4,
-        group: Optional[str] = None
+        group: Optional[str] = None,
+        only_with_details: bool = True  # ADD THIS PARAMETER
     ) -> List[Dict[str, Any]]:
         """Return empty list for now"""
         return []
     
     # -------------------------
-    # Jobs in industry
+    # Jobs in industry - NO CHANGE
     # -------------------------
     async def jobs_in_industry(
         self,
@@ -352,17 +454,28 @@ class JobsRepo:
         return naics_title, rows
     
     # -------------------------
-    # Job groups
+    # Job groups - MODIFIED to use only jobs with details
     # -------------------------
-    async def job_groups(self, year: int) -> List[Dict[str, str]]:
-        """Get distinct occupation groups from cross-industry data"""
+    async def job_groups(self, year: int, only_with_details: bool = True) -> List[Dict[str, str]]:
+        """Get distinct occupation groups from cross-industry data - only jobs with O*NET data"""
+        
+        # Get filtered job list
+        _, jobs = await self.list_jobs(
+            year=year, 
+            limit=10000, 
+            offset=0, 
+            only_with_details=only_with_details
+        )
+        
+        job_codes = [job["occ_code"] for job in jobs]
+        
         pipeline = [
             {
                 "$match": {
                     "year": int(year),
                     "naics": "000000",
-                    "group": {"$ne": None, "$ne": ""},
-                    "occ_code": {"$ne": "00-0000"}
+                    "occ_code": {"$in": job_codes, "$ne": "00-0000"},
+                    "group": {"$ne": None, "$ne": ""}
                 }
             },
             {"$group": {"_id": "$group"}},
@@ -376,7 +489,7 @@ class JobsRepo:
         return groups
     
     # -------------------------
-    # Simplified methods that return empty data
+    # Simplified methods - NO CHANGE
     # -------------------------
     async def job_composition_by_group(self, year: int) -> List[Dict[str, Any]]:
         """Return empty list"""
