@@ -17,6 +17,8 @@ from app.models.job_models import (
     JobTopTrendsResponse,
     JobTrendSeries,
     JobTrendPoint,
+    JobSalaryTrendSeries,
+    JobTopCombinedResponse,
     JobGroupsResponse,
     JobGroupItem,
     JobCompositionResponse,
@@ -41,7 +43,7 @@ async def list_jobs(
     search: Optional[str] = Query(None, description="Search by job title"),
     limit: int = Query(1000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
-    only_with_details: bool = Query(True, description="Only show jobs with O*NET data"),  # ADD THIS
+    only_with_details: bool = Query(True, description="Only show jobs with O*NET data"),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobListResponse:
     """List all jobs/occupations - only those with O*NET data by default"""
@@ -52,7 +54,7 @@ async def list_jobs(
         search=search,
         limit=limit, 
         offset=offset,
-        only_with_details=only_with_details  # PASS IT HERE
+        only_with_details=only_with_details
     )
     
     if not jobs:
@@ -96,7 +98,7 @@ async def dashboard_metrics(
         total_employment=data["total_employment"],
         avg_job_growth_pct=data["avg_job_growth_pct"],
         top_growing_job=top_obj,
-        median_job_salary=data["median_job_salary"],
+        a_median=data["a_median"],
     )
 
 
@@ -148,33 +150,105 @@ async def top_jobs(
 
 @router.get("/top-trends", response_model=JobTopTrendsResponse)
 async def top_jobs_trends(
-    year_from: int = Query(2019),
-    year_to: int = Query(2024),
-    limit: int = Query(4, ge=1, le=10),
+    year_from: int = Query(2011, description="Start year"),
+    year_to: int = Query(2024, description="End year"),
+    limit: int = Query(10, ge=1, le=20),
     group: Optional[str] = Query(None),
+    sort_by: Literal["employment", "salary"] = Query("employment", description="Sort top jobs by this criteria"),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobTopTrendsResponse:
-    """Employment trends for top jobs over time - SIMPLIFIED to return empty response"""
+    """Employment trends for top jobs over time"""
     repo = JobsRepo(db)
     
-    # Get top jobs at the end year
-    top = await repo.top_jobs(year=year_to, limit=limit, by="employment", group=group)
-    occ_codes = [t["occ_code"] for t in top if t.get("occ_code")]
+    series = await repo.top_jobs_trends(
+        year_from=year_from,
+        year_to=year_to,
+        limit=limit,
+        group=group,
+        sort_by=sort_by
+    )
     
-    if not occ_codes:
-        return JobTopTrendsResponse(
-            year_from=min(year_from, year_to),
-            year_to=max(year_from, year_to),
-            limit=limit,
-            series=[]
-        )
-    
-    # SIMPLIFIED: Just return empty series for now to avoid errors
     return JobTopTrendsResponse(
         year_from=min(year_from, year_to),
         year_to=max(year_from, year_to),
         limit=limit,
-        series=[]
+        series=series
+    )
+
+
+@router.get("/top-salary-trends", response_model=JobTopTrendsResponse)
+async def top_jobs_salary_trends(
+    year_from: int = Query(2011, description="Start year"),
+    year_to: int = Query(2024, description="End year"),
+    limit: int = Query(10, ge=1, le=20),
+    group: Optional[str] = Query(None),
+    sort_by: Literal["employment", "salary"] = Query("employment", description="Sort top jobs by this criteria"),
+    db: "AgnosticDatabase" = Depends(get_db),
+) -> JobTopTrendsResponse:
+    """Salary trends for top jobs over time"""
+    repo = JobsRepo(db)
+    
+    series = await repo.top_jobs_salary_trends(
+        year_from=year_from,
+        year_to=year_to,
+        limit=limit,
+        group=group,
+        sort_by=sort_by
+    )
+    
+    return JobTopTrendsResponse(
+        year_from=min(year_from, year_to),
+        year_to=max(year_from, year_to),
+        limit=limit,
+        series=series
+    )
+
+
+@router.get("/top-combined", response_model=JobTopCombinedResponse)
+async def top_jobs_combined(
+    year: int = Query(...),
+    limit: int = Query(10, ge=1, le=20),
+    by: Literal["employment", "salary"] = Query("employment"),
+    group: Optional[str] = Query(None),
+    db: "AgnosticDatabase" = Depends(get_db),
+) -> JobTopCombinedResponse:
+    """Get combined data for top jobs - employment and salary trends"""
+    repo = JobsRepo(db)
+    
+    # Get top jobs list
+    top_jobs_list = await repo.top_jobs(
+        year=year,
+        limit=limit,
+        by=by,
+        group=group
+    )
+    
+    # Get employment trends for these jobs
+    employment_trends = await repo.top_jobs_trends(
+        year_from=2011,
+        year_to=year,
+        limit=limit,
+        group=group,
+        sort_by=by
+    )
+    
+    # Get salary trends for these jobs
+    salary_trends = await repo.top_jobs_salary_trends(
+        year_from=2011,
+        year_to=year,
+        limit=limit,
+        group=group,
+        sort_by=by
+    )
+    
+    return JobTopCombinedResponse(
+        year=year,
+        by=by,
+        limit=limit,
+        group=group,
+        top_jobs=top_jobs_list,
+        employment_trends=employment_trends,
+        salary_trends=salary_trends
     )
 
 
@@ -189,7 +263,7 @@ async def job_composition(
     
     return JobCompositionResponse(
         year=year,
-        rows=rows  # Will be empty list from simplified repo
+        rows=rows
     )
 
 
