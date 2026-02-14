@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from collections import defaultdict
+import asyncio
 
 if TYPE_CHECKING:
     from motor.core import AgnosticDatabase
@@ -58,17 +59,22 @@ class JobDetailRepo:
     - technology_skills
     - tools_used
     - work_activities
+    
+    Uses optimized MAX aggregation to match JobsRepo methodology.
     """
     
     def __init__(self, db: "AgnosticDatabase"):
         self.db = db
     
+    # -------------------------
+    # OPTIMIZED BLS DATA METHODS - MATCHING JOBSREPO
+    # -------------------------
+    
     async def get_job_by_occ_code(self, occ_code: str, year: int = 2024) -> Optional[Dict[str, Any]]:
         """
-        Get basic job info from bls_oews collection using MAX tot_emp approach
-        This ensures consistency with the jobs page
+        Get basic job info using MAX tot_emp approach - matches JobsRepo.top_jobs()
+        Single aggregation for maximum performance.
         """
-        # Use MAX tot_emp approach to get the best document for this occupation
         pipeline = [
             {
                 "$match": {
@@ -77,51 +83,41 @@ class JobDetailRepo:
                 }
             },
             {
+                "$group": {
+                    "_id": None,
+                    "occ_title": {"$first": "$occ_title"},
+                    "group": {"$first": "$group"},
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_docs": {"$push": {
+                        "tot_emp": "$tot_emp",
+                        "a_median": "$a_median"
+                    }}
+                }
+            },
+            {
                 "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
+                    "selected_doc": {
+                        "$arrayElemAt": [
+                            {
+                                "$filter": {
+                                    "input": "$all_docs",
+                                    "as": "doc",
+                                    "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
                                 }
                             },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    },
-                    "a_median_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$a_median"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
+                            0
+                        ]
                     }
                 }
             },
             {
-                "$sort": {"tot_emp_num": -1}  # Sort by employment descending
-            },
-            {
-                "$limit": 1  # Take the document with highest tot_emp
-            },
-            {
                 "$project": {
                     "_id": 0,
-                    "occ_code": 1,
+                    "occ_code": occ_code,
                     "occ_title": 1,
-                    "tot_emp": "$tot_emp_num",
-                    "a_median": "$a_median_num",
-                    "group": 1
+                    "group": 1,
+                    "tot_emp": "$max_emp",
+                    "a_median": "$selected_doc.a_median"
                 }
             }
         ]
@@ -133,18 +129,17 @@ class JobDetailRepo:
             return {
                 "occ_code": occ_code,
                 "occ_title": str(doc.get("occ_title", "")),
-                "tot_emp": doc.get("tot_emp", 0),
-                "a_median": doc.get("a_median", 0),
+                "tot_emp": _to_float(doc.get("tot_emp", 0)),
+                "a_median": _to_float(doc.get("a_median", 0)),
                 "group": doc.get("group")
             }
         return None
     
     async def get_job_growth_trend(self, occ_code: str) -> float:
         """
-        Calculate job growth percentage by comparing current year with previous year
-        Uses MAX tot_emp for each year to handle duplicates
+        Calculate job growth percentage - optimized single aggregation
+        Matches JobsRepo.get_job_market_trend methodology
         """
-        # Get the two most recent years with data using MAX per year
         pipeline = [
             {
                 "$match": {
@@ -152,53 +147,29 @@ class JobDetailRepo:
                 }
             },
             {
-                "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    }
-                }
-            },
-            {
                 "$group": {
                     "_id": "$year",
-                    "max_emp": {"$max": "$tot_emp_num"}  # Take MAX per year
+                    "max_emp": {"$max": "$tot_emp"}
                 }
             },
             {
-                "$project": {
-                    "year": "$_id",
-                    "employment": "$max_emp"
-                }
-            },
-            {
-                "$sort": {"year": -1}
+                "$sort": {"_id": -1}
             },
             {
                 "$limit": 2
             }
         ]
         
-        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=2)
+        results = await self.db["bls_oews"].aggregate(pipeline).to_list(length=2)
         
-        if len(result) < 2:
+        if len(results) < 2:
             return 0.0
         
-        current_year = result[0]
-        prev_year = result[1]
+        current = results[0]
+        previous = results[1]
         
-        current_emp = _to_float(current_year.get("employment", 0))
-        prev_emp = _to_float(prev_year.get("employment", 0))
+        current_emp = _to_float(current.get("max_emp", 0))
+        prev_emp = _to_float(previous.get("max_emp", 0))
         
         if prev_emp == 0:
             return 0.0
@@ -208,8 +179,8 @@ class JobDetailRepo:
     
     async def get_job_salary_trend(self, occ_code: str) -> float:
         """
-        Calculate salary growth percentage
-        Uses salary from document with MAX tot_emp for each year
+        Calculate salary growth percentage - optimized single aggregation
+        Takes salary from document with MAX tot_emp for each year
         """
         pipeline = [
             {
@@ -218,72 +189,31 @@ class JobDetailRepo:
                 }
             },
             {
-                "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    },
-                    "a_median_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$a_median"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    }
-                }
-            },
-            {
-                "$sort": {"tot_emp_num": -1}  # Sort by employment descending
-            },
-            {
                 "$group": {
                     "_id": "$year",
-                    "salary": {"$first": "$a_median_num"},  # Take salary from doc with max employment
-                    "year": {"$first": "$year"}
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_salaries": {"$push": "$a_median"}
                 }
             },
             {
-                "$project": {
-                    "_id": 0,
-                    "year": 1,
-                    "salary": 1
-                }
-            },
-            {
-                "$sort": {"year": -1}
+                "$sort": {"_id": -1}
             },
             {
                 "$limit": 2
             }
         ]
         
-        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=2)
+        results = await self.db["bls_oews"].aggregate(pipeline).to_list(length=2)
         
-        if len(result) < 2:
+        if len(results) < 2:
             return 0.0
         
-        current_year = result[0]
-        prev_year = result[1]
+        current = results[0]
+        previous = results[1]
         
-        current_salary = _to_float(current_year.get("salary", 0))
-        prev_salary = _to_float(prev_year.get("salary", 0))
+        # Take first salary (from document with max emp)
+        current_salary = _to_float(current.get("all_salaries", [0])[0]) if current.get("all_salaries") else 0
+        prev_salary = _to_float(previous.get("all_salaries", [0])[0]) if previous.get("all_salaries") else 0
         
         if prev_salary == 0:
             return 0.0
@@ -291,9 +221,12 @@ class JobDetailRepo:
         growth_pct = ((current_salary - prev_salary) / prev_salary) * 100
         return round(growth_pct, 1)
     
+    # -------------------------
+    # O*NET DATA METHODS (KEEP AS IS - THESE ARE FAST ENOUGH)
+    # -------------------------
+    
     async def get_experience_required(self, onet_soc: str) -> str:
         """Get experience required from education/training data"""
-        # Try to find experience data
         doc = await self.db["education_training_experience"].find_one(
             {
                 "onet_soc": onet_soc,
@@ -304,7 +237,6 @@ class JobDetailRepo:
         
         if doc:
             value = _to_float(doc.get("data_value", 0))
-            # Map value to experience description
             if value >= 8:
                 return "10+ years"
             elif value >= 7:
@@ -330,34 +262,24 @@ class JobDetailRepo:
         """Calculate average skill intensity (average of top skills)"""
         skills = await self.get_skills(onet_soc)
         if skills:
-            # Get average of top 10 skills
             top_skills = skills[:10]
             avg_value = sum(s["value"] for s in top_skills) / len(top_skills)
-            # Convert to 0-10 scale
             return round(avg_value / 10, 1)
         return 0.0
     
     async def get_onet_soc(self, occ_code: str) -> Optional[str]:
-        """
-        Map BLS OCC code to O*NET SOC code format.
-        BLS uses format: "43-0000"
-        O*NET uses format: "43-0000.00"
-        """
+        """Map BLS OCC code to O*NET SOC code format"""
         if not occ_code:
             return None
         
-        # Clean the code
         occ_code = occ_code.strip()
         
-        # If it already has .00, return as is
         if ".00" in occ_code:
             return occ_code
         
-        # If it's in format "43-0000", add ".00"
         if "-" in occ_code and len(occ_code) >= 6:
             return f"{occ_code}.00"
         
-        # Try to find by title if code doesn't match expected format
         return None
     
     async def find_onet_soc_by_title(self, title: str) -> Optional[str]:
@@ -365,7 +287,6 @@ class JobDetailRepo:
         if not title:
             return None
         
-        # Try to find in skills collection first
         doc = await self.db["skills"].find_one(
             {"title": {"$regex": title, "$options": "i"}},
             {"onet_soc": 1}
@@ -373,7 +294,6 @@ class JobDetailRepo:
         if doc:
             return doc.get("onet_soc")
         
-        # Try other collections
         for collection in ["abilities", "knowledge", "work_activities"]:
             doc = await self.db[collection].find_one(
                 {"title": {"$regex": title, "$options": "i"}},
@@ -384,15 +304,12 @@ class JobDetailRepo:
         
         return None
     
-    # -------------------------
-    # Skills (from skills collection)
-    # -------------------------
     async def get_skills(self, onet_soc: str) -> List[Dict[str, Any]]:
         """Get skills from O*NET skills collection"""
         q = {"onet_soc": onet_soc}
         cursor = self.db["skills"].find(
             q,
-            {"_id": 0, "element_name": 1, "data_value": 1, "scale_id": 1, "scale_name": 1}
+            {"_id": 0, "element_name": 1, "data_value": 1, "scale_id": 1}
         )
         
         skills = []
@@ -410,9 +327,6 @@ class JobDetailRepo:
         skills.sort(key=lambda x: x["value"], reverse=True)
         return skills
     
-    # -------------------------
-    # Technology Skills (from technology_skills collection)
-    # -------------------------
     async def get_technology_skills(self, onet_soc: str) -> List[Dict[str, Any]]:
         """Get technology skills from O*NET technology_skills collection"""
         q = {"onet_soc": onet_soc}
@@ -434,9 +348,6 @@ class JobDetailRepo:
         
         return tech_skills
     
-    # -------------------------
-    # Tools Used (from tools_used collection)
-    # -------------------------
     async def get_tools(self, onet_soc: str) -> List[Dict[str, Any]]:
         """Get tools from O*NET tools_used collection"""
         q = {"onet_soc": onet_soc}
@@ -456,9 +367,6 @@ class JobDetailRepo:
         
         return tools
     
-    # -------------------------
-    # Abilities (from abilities collection)
-    # -------------------------
     async def get_abilities(self, onet_soc: str) -> List[Dict[str, Any]]:
         """Get abilities from O*NET abilities collection"""
         q = {"onet_soc": onet_soc}
@@ -498,9 +406,6 @@ class JobDetailRepo:
         abilities.sort(key=lambda x: x["value"], reverse=True)
         return abilities
     
-    # -------------------------
-    # Knowledge (from knowledge collection)
-    # -------------------------
     async def get_knowledge(self, onet_soc: str) -> List[Dict[str, Any]]:
         """Get knowledge areas from O*NET knowledge collection"""
         q = {"onet_soc": onet_soc}
@@ -533,9 +438,6 @@ class JobDetailRepo:
         knowledge.sort(key=lambda x: x["value"], reverse=True)
         return knowledge
     
-    # -------------------------
-    # Education (from education_training_experience collection)
-    # -------------------------
     async def get_education(self, onet_soc: str) -> Optional[Dict[str, Any]]:
         """Get education requirements from O*NET education collection"""
         q = {
@@ -560,9 +462,6 @@ class JobDetailRepo:
             }
         return None
     
-    # -------------------------
-    # Work Activities (from work_activities collection)
-    # -------------------------
     async def get_work_activities(self, onet_soc: str) -> List[Dict[str, Any]]:
         """Get work activities from O*NET work_activities collection"""
         q = {"onet_soc": onet_soc}
@@ -585,12 +484,13 @@ class JobDetailRepo:
         return activities
     
     # -------------------------
-    # Complete job detail
+    # COMPLETE JOB DETAIL - OPTIMIZED PARALLEL FETCHING
     # -------------------------
+    
     async def get_complete_job_detail(self, occ_code: str, year: int = 2024) -> Dict[str, Any]:
-        """Get complete job details from all O*NET collections"""
+        """Get complete job details - optimized with parallel fetching"""
         
-        # Get basic job info from BLS using MAX approach (matches jobs page)
+        # Get basic job info using optimized method (matches JobsRepo)
         basic_info = await self.get_job_by_occ_code(occ_code, year)
         
         # Get O*NET SOC code
@@ -600,11 +500,8 @@ class JobDetailRepo:
         if not onet_soc and basic_info:
             title = basic_info.get("occ_title", "")
             onet_soc = await self.find_onet_soc_by_title(title)
-            print(f"🔍 Found by title: {title} -> {onet_soc}")
         
-        print(f"🔍 OCC Code: {occ_code} -> ONET SOC: {onet_soc}")
-        
-        # Initialize with empty data
+        # Initialize result
         result = {
             "occ_code": occ_code,
             "occ_title": basic_info.get("occ_title", "") if basic_info else "",
@@ -625,44 +522,34 @@ class JobDetailRepo:
             "work_activities": []
         }
         
-        if not onet_soc:
-            print(f"⚠️ No ONET SOC found for {occ_code}")
+        if not onet_soc or not basic_info:
             return result
         
-        # Fetch all data in parallel
-        import asyncio
+        # Fetch all O*NET data in parallel
+        tasks = [
+            self.get_skills(onet_soc),
+            self.get_technology_skills(onet_soc),
+            self.get_tools(onet_soc),
+            self.get_abilities(onet_soc),
+            self.get_knowledge(onet_soc),
+            self.get_education(onet_soc),
+            self.get_work_activities(onet_soc),
+        ]
         
-        print(f"📊 Fetching data for ONET SOC: {onet_soc}")
+        # Fetch trend data in parallel (these are now optimized)
+        trend_tasks = [
+            self.get_job_growth_trend(occ_code),
+            self.get_job_salary_trend(occ_code),
+            self.get_experience_required(onet_soc),
+            self.get_skill_intensity(onet_soc)
+        ]
         
-        # Fetch O*NET data
-        skills_task = self.get_skills(onet_soc)
-        tech_skills_task = self.get_technology_skills(onet_soc)
-        tools_task = self.get_tools(onet_soc)
-        abilities_task = self.get_abilities(onet_soc)
-        knowledge_task = self.get_knowledge(onet_soc)
-        education_task = self.get_education(onet_soc)
-        activities_task = self.get_work_activities(onet_soc)
+        # Wait for all data
+        onet_results = await asyncio.gather(*tasks)
+        trend_results = await asyncio.gather(*trend_tasks)
         
-        # Fetch trend data (using MAX approach)
-        growth_trend_task = self.get_job_growth_trend(occ_code)
-        salary_trend_task = self.get_job_salary_trend(occ_code)
-        experience_task = self.get_experience_required(onet_soc)
-        skill_intensity_task = self.get_skill_intensity(onet_soc)
-        
-        skills, tech_skills, tools, abilities, knowledge, education, activities, growth_trend, salary_trend, experience, skill_intensity = await asyncio.gather(
-            skills_task, tech_skills_task, tools_task, abilities_task, 
-            knowledge_task, education_task, activities_task,
-            growth_trend_task, salary_trend_task, experience_task, skill_intensity_task
-        )
-        
-        print(f"✅ Skills found: {len(skills)}")
-        print(f"✅ Tech skills found: {len(tech_skills)}")
-        print(f"✅ Abilities found: {len(abilities)}")
-        print(f"✅ Knowledge found: {len(knowledge)}")
-        print(f"✅ Activities found: {len(activities)}")
-        print(f"✅ Education found: {education is not None}")
-        print(f"📊 Growth trend: {growth_trend}%")
-        print(f"📊 Salary trend: {salary_trend}%")
+        skills, tech_skills, tools, abilities, knowledge, education, activities = onet_results
+        growth_trend, salary_trend, experience, skill_intensity = trend_results
         
         # Categorize skills
         all_skills = skills
@@ -682,13 +569,12 @@ class JobDetailRepo:
             else:
                 skill["type"] = "general"
         
-        # Generate metrics from real data (matches jobs page format)
+        # Generate metrics (matches JobsRepo format)
         metrics = []
         if basic_info:
             total_employment = _to_float(basic_info.get("tot_emp", 0))
             median_salary = _to_float(basic_info.get("a_median", 0))
             
-            # Format trend direction
             growth_direction = "up" if growth_trend >= 0 else "down"
             salary_direction = "up" if salary_trend >= 0 else "down"
             
