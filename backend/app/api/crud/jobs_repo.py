@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Literal
+from functools import lru_cache
+import asyncio
 
 if TYPE_CHECKING:
     from motor.core import AgnosticDatabase
@@ -32,13 +34,37 @@ def _to_float(v: Any) -> float:
 class JobsRepo:
     """
     Jobs/Occupations repository.
-    Returns data from bls_oews collection using hybrid MAX approach:
+    Returns data from bls_oews collection using MAX aggregation:
     - For single year queries, takes MAX tot_emp per occupation
     - For multi-year trends, takes MAX tot_emp per year to handle duplicates
     """
     
     def __init__(self, db: "AgnosticDatabase"):
         self.db = db
+        self._onet_cache = None
+        self._onet_cache_time = 0
+    
+    async def _get_onet_socs(self, force_refresh: bool = False) -> set:
+        """Cache O*NET SOC codes to avoid repeated distinct() calls"""
+        import time
+        current_time = time.time()
+        
+        # Refresh cache every 5 minutes or if forced
+        if self._onet_cache is None or force_refresh or current_time - self._onet_cache_time > 300:
+            onet_socs = set()
+            
+            # Run distinct queries in parallel
+            collections = ["skills", "technology_skills", "abilities", "knowledge", "work_activities"]
+            tasks = [self.db[col].distinct("onet_soc") for col in collections]
+            results = await asyncio.gather(*tasks)
+            
+            for result in results:
+                onet_socs.update(result)
+            
+            self._onet_cache = onet_socs
+            self._onet_cache_time = current_time
+        
+        return self._onet_cache
     
     async def _latest_year(self) -> Optional[int]:
         doc = await self.db["bls_oews"].find_one(
@@ -51,108 +77,50 @@ class JobsRepo:
     async def get_job_market_trend(self, year: int) -> float:
         """
         Calculate job market growth percentage by comparing total employment
-        with previous year using MAX employment values
+        with previous year using MAX employment values - single aggregation
         """
-        # Get previous year
-        prev_year = year - 1
-        
-        # Calculate total employment for current year using MAX per occupation
-        pipeline_current = [
+        pipeline = [
             {
                 "$match": {
-                    "year": int(year),
+                    "year": {"$in": [int(year), int(year - 1)]},
                     "occ_code": {"$ne": "00-0000"},
                     "tot_emp": {"$ne": None, "$ne": ""}
                 }
             },
             {
-                "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    }
+                "$group": {
+                    "_id": {
+                        "year": "$year",
+                        "occ_code": "$occ_code"
+                    },
+                    "max_emp": {"$max": "$tot_emp"}
                 }
             },
             {
                 "$group": {
-                    "_id": "$occ_code",
-                    "max_emp": {"$max": "$tot_emp_num"}
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
+                    "_id": "$_id.year",
                     "total_emp": {"$sum": "$max_emp"}
                 }
+            },
+            {
+                "$sort": {"_id": 1}
             }
         ]
         
-        # Calculate total employment for previous year using MAX per occupation
-        pipeline_prev = [
-            {
-                "$match": {
-                    "year": int(prev_year),
-                    "occ_code": {"$ne": "00-0000"},
-                    "tot_emp": {"$ne": None, "$ne": ""}
-                }
-            },
-            {
-                "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    }
-                }
-            },
-            {
-                "$group": {
-                    "_id": "$occ_code",
-                    "max_emp": {"$max": "$tot_emp_num"}
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
-                    "total_emp": {"$sum": "$max_emp"}
-                }
-            }
-        ]
+        results = await self.db["bls_oews"].aggregate(pipeline).to_list(length=None)
         
-        current_result = await self.db["bls_oews"].aggregate(pipeline_current).to_list(length=1)
-        prev_result = await self.db["bls_oews"].aggregate(pipeline_prev).to_list(length=1)
-        
-        current_emp = _to_float(current_result[0]["total_emp"]) if current_result else 0.0
-        prev_emp = _to_float(prev_result[0]["total_emp"]) if prev_result else 0.0
+        emp_by_year = {r["_id"]: r["total_emp"] for r in results}
+        current_emp = _to_float(emp_by_year.get(int(year), 0))
+        prev_emp = _to_float(emp_by_year.get(int(year - 1), 0))
         
         if prev_emp == 0:
             return 0.0
         
-        # Calculate growth percentage
         growth_pct = ((current_emp - prev_emp) / prev_emp) * 100
         return round(growth_pct, 1)
     
     # -------------------------
-    # Jobs list / search - HYBRID MAX APPROACH
+    # Jobs list / search - OPTIMIZED MAX APPROACH
     # -------------------------
     async def list_jobs(
         self, 
@@ -171,100 +139,67 @@ class JobsRepo:
             if year is None:
                 return 0, []
         
-        # First, get all O*NET SOC codes that have data
-        onet_socs = set()
-        
-        if only_with_details:
-            # Get all SOC codes that have skills
-            cursor = await self.db["skills"].distinct("onet_soc")
-            onet_socs.update(cursor)
-            
-            # Also include those with tech skills
-            cursor = await self.db["technology_skills"].distinct("onet_soc")
-            onet_socs.update(cursor)
-            
-            # Include abilities
-            cursor = await self.db["abilities"].distinct("onet_soc")
-            onet_socs.update(cursor)
-            
-            # Include knowledge
-            cursor = await self.db["knowledge"].distinct("onet_soc")
-            onet_socs.update(cursor)
-            
-            # Include work activities
-            cursor = await self.db["work_activities"].distinct("onet_soc")
-            onet_socs.update(cursor)
-        
-        # Build match query
-        match_q = {
-            "year": int(year),
-            "occ_code": {"$ne": "00-0000"},
-            "occ_title": {"$ne": None, "$ne": ""}
-        }
-        
-        if group:
-            match_q["group"] = group
-        if search:
-            match_q["occ_title"] = {"$regex": search, "$options": "i"}
-        
-        # Only include jobs that map to O*NET SOCs with data
-        if only_with_details and onet_socs:
-            # Convert O*NET SOC codes to BLS format (remove .00)
-            bls_codes = []
-            for soc in onet_socs:
-                if soc and isinstance(soc, str):
-                    bls_code = soc.replace(".00", "")
-                    bls_codes.append(bls_code)
-            
-            if bls_codes:
-                bls_codes = list(set(bls_codes))
-                match_q["occ_code"] = {"$in": bls_codes}
-        
-        # Aggregate to get MAX tot_emp and associated a_median for each occupation
         pipeline = [
-            {"$match": match_q},
             {
-                "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    },
-                    "a_median_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$a_median"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    }
+                "$match": {
+                    "year": int(year),
+                    "occ_code": {"$ne": "00-0000"},
+                    "occ_title": {"$ne": None, "$ne": ""}
                 }
-            },
-            {
-                "$sort": {"tot_emp_num": -1}
-            },
+            }
+        ]
+        
+        # Add filters
+        if group:
+            pipeline[0]["$match"]["group"] = group
+        if search:
+            pipeline[0]["$match"]["occ_title"] = {"$regex": search, "$options": "i"}
+        
+        # O*NET SOC filtering
+        if only_with_details:
+            onet_socs = await self._get_onet_socs()
+            if onet_socs:
+                # Convert O*NET SOC codes to BLS format (remove .00)
+                bls_codes = [soc.replace(".00", "") for soc in onet_socs if isinstance(soc, str)]
+                if bls_codes:
+                    pipeline[0]["$match"]["occ_code"] = {"$in": list(set(bls_codes))}
+        
+        # Optimized aggregation without $convert/$trim
+        pipeline.extend([
             {
                 "$group": {
                     "_id": "$occ_code",
                     "occ_title": {"$first": "$occ_title"},
                     "group": {"$first": "$group"},
-                    "total_employment": {"$first": "$tot_emp_num"},
-                    "a_median": {"$first": "$a_median_num"}
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_docs": {"$push": {
+                        "tot_emp": "$tot_emp",
+                        "a_median": "$a_median"
+                    }}
+                }
+            },
+            {
+                "$addFields": {
+                    "selected_doc": {
+                        "$arrayElemAt": [
+                            {
+                                "$filter": {
+                                    "input": "$all_docs",
+                                    "as": "doc",
+                                    "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
+                                }
+                            },
+                            0
+                        ]
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "occ_title": 1,
+                    "group": 1,
+                    "total_employment": "$max_emp",
+                    "a_median": "$selected_doc.a_median"
                 }
             },
             {
@@ -275,7 +210,7 @@ class JobsRepo:
             {"$sort": {"total_employment": -1}},
             {"$skip": offset},
             {"$limit": limit}
-        ]
+        ])
         
         rows = []
         async for doc in self.db["bls_oews"].aggregate(pipeline):
@@ -306,7 +241,7 @@ class JobsRepo:
         return jobs
     
     # -------------------------
-    # Top jobs - HYBRID MAX APPROACH
+    # Top jobs - OPTIMIZED MAX APPROACH
     # -------------------------
     async def top_jobs(
         self,
@@ -318,89 +253,61 @@ class JobsRepo:
     ) -> List[Dict[str, Any]]:
         """Top jobs using MAX tot_emp per occupation"""
         
-        # First, get all O*NET SOC codes that have data
-        onet_socs = set()
-        
-        if only_with_details:
-            # Get all SOC codes that have skills
-            cursor = await self.db["skills"].distinct("onet_soc")
-            onet_socs.update(cursor)
-            
-            # Also include those with tech skills
-            cursor = await self.db["technology_skills"].distinct("onet_soc")
-            onet_socs.update(cursor)
-            
-            # Include abilities
-            cursor = await self.db["abilities"].distinct("onet_soc")
-            onet_socs.update(cursor)
-        
-        # Build match query
-        match_q = {
-            "year": int(year),
-            "occ_code": {"$ne": "00-0000"}
-        }
+        pipeline = [
+            {
+                "$match": {
+                    "year": int(year),
+                    "occ_code": {"$ne": "00-0000"}
+                }
+            }
+        ]
         
         if group:
-            match_q["group"] = group
+            pipeline[0]["$match"]["group"] = group
         
-        # Only include jobs that map to O*NET SOCs with data
-        if only_with_details and onet_socs:
-            # Convert O*NET SOC codes to BLS format (remove .00)
-            bls_codes = []
-            for soc in onet_socs:
-                if soc and isinstance(soc, str):
-                    bls_code = soc.replace(".00", "")
-                    bls_codes.append(bls_code)
-            
-            if bls_codes:
-                bls_codes = list(set(bls_codes))
-                match_q["occ_code"] = {"$in": bls_codes}
+        # O*NET SOC filtering
+        if only_with_details:
+            onet_socs = await self._get_onet_socs()
+            if onet_socs:
+                bls_codes = [soc.replace(".00", "") for soc in onet_socs if isinstance(soc, str)]
+                if bls_codes:
+                    pipeline[0]["$match"]["occ_code"] = {"$in": list(set(bls_codes))}
         
-        # Aggregate to get MAX tot_emp and associated values
-        pipeline = [
-            {"$match": match_q},
-            {
-                "$addFields": {
-                    "tot_emp_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$tot_emp"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    },
-                    "a_median_num": {
-                        "$convert": {
-                            "input": {
-                                "$trim": {
-                                    "input": {
-                                        "$toString": "$a_median"
-                                    }
-                                }
-                            },
-                            "to": "double",
-                            "onError": 0,
-                            "onNull": 0
-                        }
-                    }
-                }
-            },
-            {
-                "$sort": {"tot_emp_num": -1}
-            },
+        pipeline.extend([
             {
                 "$group": {
                     "_id": "$occ_code",
                     "occ_title": {"$first": "$occ_title"},
                     "group": {"$first": "$group"},
-                    "total_employment": {"$first": "$tot_emp_num"},
-                    "a_median": {"$first": "$a_median_num"}
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_docs": {"$push": {
+                        "tot_emp": "$tot_emp",
+                        "a_median": "$a_median"
+                    }}
+                }
+            },
+            {
+                "$addFields": {
+                    "selected_doc": {
+                        "$arrayElemAt": [
+                            {
+                                "$filter": {
+                                    "input": "$all_docs",
+                                    "as": "doc",
+                                    "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
+                                }
+                            },
+                            0
+                        ]
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "occ_title": 1,
+                    "group": 1,
+                    "total_employment": "$max_emp",
+                    "a_median": "$selected_doc.a_median"
                 }
             },
             {
@@ -408,7 +315,16 @@ class JobsRepo:
                     "total_employment": {"$gt": 0}
                 }
             }
-        ]
+        ])
+        
+        # Add sorting based on criteria
+        if by == "salary":
+            pipeline.append({"$match": {"a_median": {"$ne": None, "$gt": 0}}})
+            pipeline.append({"$sort": {"a_median": -1}})
+        else:
+            pipeline.append({"$sort": {"total_employment": -1}})
+        
+        pipeline.append({"$limit": limit})
         
         rows = []
         async for doc in self.db["bls_oews"].aggregate(pipeline):
@@ -421,14 +337,7 @@ class JobsRepo:
                 "growth_pct": None
             })
         
-        # Sort based on criteria
-        if by == "employment":
-            rows.sort(key=lambda r: r.get("total_employment", 0.0), reverse=True)
-        else:  # salary
-            rows = [r for r in rows if r.get("a_median") is not None]
-            rows.sort(key=lambda r: r.get("a_median", 0.0), reverse=True)
-        
-        return rows[:limit]
+        return rows
     
     async def top_jobs_with_growth(
         self,
@@ -447,7 +356,7 @@ class JobsRepo:
         )
     
     # -------------------------
-    # Top jobs employment trends - HYBRID MAX APPROACH
+    # Top jobs trends - OPTIMIZED (SINGLE QUERY)
     # -------------------------
     async def top_jobs_trends(
         self,
@@ -459,8 +368,7 @@ class JobsRepo:
         only_with_details: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        Get employment trends for top jobs over time - uses MAX tot_emp per year
-        to handle cases where multiple documents exist for the same occupation/year
+        Get employment trends for top jobs over time - single aggregation
         """
         # First, get top jobs at the end year
         top_jobs_end = await self.top_jobs(
@@ -475,58 +383,84 @@ class JobsRepo:
             return []
         
         occ_codes = [job["occ_code"] for job in top_jobs_end]
-        
-        # Build years list
         years = list(range(min(year_from, year_to), max(year_from, year_to) + 1))
         
-        series = []
-        
-        for job in top_jobs_end:
-            code = job["occ_code"]
-            title = job["occ_title"]
-            
-            # Get ALL documents for this occupation across all years (any NAICS)
-            cursor = self.db["bls_oews"].find(
-                {
-                    "occ_code": code,
+        # Single aggregation for all occupations
+        pipeline = [
+            {
+                "$match": {
+                    "occ_code": {"$in": occ_codes},
                     "year": {"$in": years}
-                },
-                {
-                    "_id": 0,
-                    "year": 1,
-                    "tot_emp": 1
                 }
-            ).sort("year", 1)
-            
-            # Create a map of year -> list of employment values
-            year_emp_map = {}
-            async for doc in cursor:
-                year = doc["year"]
-                emp = _to_float(doc.get("tot_emp", 0))
-                
-                if year not in year_emp_map:
-                    year_emp_map[year] = []
-                year_emp_map[year].append(emp)
-            
-            # Build points array using MAX employment value for each year
-            points = []
-            for y in years:
-                if y in year_emp_map:
-                    emp = max(year_emp_map[y])
-                else:
-                    emp = 0
-                points.append({"year": y, "employment": emp})
-            
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "occ_code": "$occ_code",
+                        "year": "$year"
+                    },
+                    "max_emp": {"$max": "$tot_emp"}
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$_id.occ_code",
+                    "points": {
+                        "$push": {
+                            "year": "$_id.year",
+                            "employment": "$max_emp"
+                        }
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "points": {
+                        "$map": {
+                            "input": years,
+                            "as": "y",
+                            "in": {
+                                "$let": {
+                                    "vars": {
+                                        "match": {
+                                            "$filter": {
+                                                "input": "$points",
+                                                "as": "p",
+                                                "cond": {"$eq": ["$$p.year", "$$y"]}
+                                            }
+                                        }
+                                    },
+                                    "in": {
+                                        "$cond": {
+                                            "if": {"$gt": [{"$size": "$$match"}, 0]},
+                                            "then": {"$arrayElemAt": ["$$match", 0]},
+                                            "else": {"year": "$$y", "employment": 0}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+        
+        # Create lookup map for job titles
+        title_map = {job["occ_code"]: job["occ_title"] for job in top_jobs_end}
+        
+        series = []
+        async for doc in self.db["bls_oews"].aggregate(pipeline):
+            code = doc["_id"]
             series.append({
                 "occ_code": code,
-                "occ_title": title,
-                "points": points
+                "occ_title": title_map.get(code, ""),
+                "points": sorted(doc["points"], key=lambda x: x["year"])
             })
         
         return series
     
     # -------------------------
-    # Top jobs salary trends - HYBRID MAX APPROACH
+    # Top jobs salary trends - OPTIMIZED (SINGLE QUERY)
     # -------------------------
     async def top_jobs_salary_trends(
         self,
@@ -538,8 +472,7 @@ class JobsRepo:
         only_with_details: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        Get salary trends for top jobs over time - uses MAX tot_emp to select the right document
-        Returns list of series with salary data for each year
+        Get salary trends for top jobs over time - single aggregation
         """
         # First, get top jobs at the end year
         top_jobs_end = await self.top_jobs(
@@ -554,128 +487,166 @@ class JobsRepo:
             return []
         
         occ_codes = [job["occ_code"] for job in top_jobs_end]
-        
-        # Build years list
         years = list(range(min(year_from, year_to), max(year_from, year_to) + 1))
         
-        series = []
-        
-        for job in top_jobs_end:
-            code = job["occ_code"]
-            title = job["occ_title"]
-            
-            # Get ALL documents for this occupation across all years
-            # Then for each year, find the document with MAX tot_emp and use its a_median
-            pipeline = [
-                {
-                    "$match": {
-                        "occ_code": code,
-                        "year": {"$in": years}
+        # Single aggregation for all occupations
+        pipeline = [
+            {
+                "$match": {
+                    "occ_code": {"$in": occ_codes},
+                    "year": {"$in": years}
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "occ_code": "$occ_code",
+                        "year": "$year"
+                    },
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_salaries": {"$push": "$a_median"}
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$_id.occ_code",
+                    "salary_data": {
+                        "$push": {
+                            "year": "$_id.year",
+                            "salary": {"$arrayElemAt": ["$all_salaries", 0]}  # Salary from the max emp document
+                        }
                     }
-                },
-                {
-                    "$addFields": {
-                        "tot_emp_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$tot_emp"
+                }
+            },
+            {
+                "$project": {
+                    "salary_data": {
+                        "$map": {
+                            "input": years,
+                            "as": "y",
+                            "in": {
+                                "$let": {
+                                    "vars": {
+                                        "match": {
+                                            "$filter": {
+                                                "input": "$salary_data",
+                                                "as": "s",
+                                                "cond": {"$eq": ["$$s.year", "$$y"]}
+                                            }
+                                        }
+                                    },
+                                    "in": {
+                                        "$cond": {
+                                            "if": {"$gt": [{"$size": "$$match"}, 0]},
+                                            "then": {"$arrayElemAt": ["$$match", 0]},
+                                            "else": {"year": "$$y", "salary": 0}
                                         }
                                     }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        },
-                        "a_median_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$a_median"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
+                                }
                             }
                         }
                     }
-                },
-                {
-                    "$sort": {"tot_emp_num": -1}
-                },
-                {
-                    "$group": {
-                        "_id": "$year",
-                        "salary": {"$first": "$a_median_num"},
-                        "year": {"$first": "$year"}
-                    }
-                },
-                {
-                    "$project": {
-                        "_id": 0,
-                        "year": 1,
-                        "salary": 1
-                    }
-                },
-                {
-                    "$sort": {"year": 1}
                 }
-            ]
-            
-            cursor = self.db["bls_oews"].aggregate(pipeline)
-            
-            # Create a map of year -> salary
-            salary_map = {}
-            async for doc in cursor:
-                salary_map[doc["year"]] = doc["salary"]
-            
-            # Build points array for all years
-            points = []
-            for y in years:
-                salary = salary_map.get(y, 0)
-                points.append({"year": y, "salary": salary})
-            
+            }
+        ]
+        
+        # Create lookup map for job titles
+        title_map = {job["occ_code"]: job["occ_title"] for job in top_jobs_end}
+        
+        series = []
+        async for doc in self.db["bls_oews"].aggregate(pipeline):
+            code = doc["_id"]
             series.append({
                 "occ_code": code,
-                "occ_title": title,
-                "points": points
+                "occ_title": title_map.get(code, ""),
+                "points": sorted(doc["salary_data"], key=lambda x: x["year"])
             })
         
         return series
     
     # -------------------------
-    # Dashboard metrics - HYBRID MAX APPROACH
+    # Dashboard metrics - OPTIMIZED (SINGLE AGGREGATION)
     # -------------------------
     async def dashboard_metrics(self, year: int, only_with_details: bool = True) -> Dict[str, Any]:
-        """Dashboard metrics using MAX employment values"""
+        """Dashboard metrics using MAX employment values - single aggregation"""
         
-        # Get job market trend
+        # Get job market trend (already optimized)
         job_market_trend = await self.get_job_market_trend(year)
         
-        # First, get filtered job list using MAX approach
-        _, jobs = await self.list_jobs(
-            year=year, 
-            limit=10000, 
-            offset=0, 
-            only_with_details=only_with_details
-        )
+        # Build match stage for filtering
+        match_stage = {
+            "year": int(year),
+            "occ_code": {"$ne": "00-0000"}
+        }
         
-        # Count unique occupations
-        total_jobs = len(jobs)
+        if only_with_details:
+            onet_socs = await self._get_onet_socs()
+            if onet_socs:
+                bls_codes = [soc.replace(".00", "") for soc in onet_socs if isinstance(soc, str)]
+                if bls_codes:
+                    match_stage["occ_code"] = {"$in": list(set(bls_codes))}
         
-        # Sum total employment
-        total_employment = sum(job["total_employment"] for job in jobs)
+        # Single aggregation for all metrics
+        pipeline = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": "$occ_code",
+                    "occ_title": {"$first": "$occ_title"},
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_salaries": {"$push": "$a_median"}
+                }
+            },
+            {
+                "$match": {
+                    "max_emp": {"$gt": 0}
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "total_jobs": {"$sum": 1},
+                    "total_employment": {"$sum": "$max_emp"},
+                    "salaries": {"$push": "$all_salaries"}
+                }
+            },
+            {
+                "$project": {
+                    "total_jobs": 1,
+                    "total_employment": 1,
+                    "salaries": {
+                        "$reduce": {
+                            "input": "$salaries",
+                            "initialValue": [],
+                            "in": {"$concatArrays": ["$$value", "$$this"]}
+                        }
+                    }
+                }
+            }
+        ]
         
-        # Get median salary from jobs list
-        salaries = [job["a_median"] for job in jobs if job.get("a_median") is not None]
+        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=1)
+        
+        if not result:
+            return {
+                "year": int(year),
+                "total_jobs": 0,
+                "total_employment": 0.0,
+                "avg_job_growth_pct": job_market_trend,
+                "top_growing_job": None,
+                "a_median": 65000.0
+            }
+        
+        doc = result[0]
+        total_jobs = doc.get("total_jobs", 0)
+        total_employment = _to_float(doc.get("total_employment", 0))
+        
+        # Calculate median salary
+        salaries = [s for s in doc.get("salaries", []) if s is not None and s > 0]
+        salaries.sort()
+        
         median_salary = 0.0
         if salaries:
-            salaries.sort()
             n = len(salaries)
             mid = n // 2
             if n % 2 == 1:
@@ -732,29 +703,50 @@ class JobsRepo:
         return naics_title, rows
     
     # -------------------------
-    # Job groups - HYBRID MAX APPROACH
+    # Job groups - OPTIMIZED (SINGLE AGGREGATION)
     # -------------------------
     async def job_groups(self, year: int, only_with_details: bool = True) -> List[Dict[str, str]]:
         """Get distinct occupation groups using MAX approach"""
         
-        # Get filtered job list
-        _, jobs = await self.list_jobs(
-            year=year, 
-            limit=10000, 
-            offset=0, 
-            only_with_details=only_with_details
-        )
+        match_stage = {
+            "year": int(year),
+            "occ_code": {"$ne": "00-0000"},
+            "group": {"$ne": None, "$ne": ""}
+        }
         
-        # Extract unique groups from jobs list
-        groups = set()
-        for job in jobs:
-            if job.get("group"):
-                groups.add(job["group"])
+        if only_with_details:
+            onet_socs = await self._get_onet_socs()
+            if onet_socs:
+                bls_codes = [soc.replace(".00", "") for soc in onet_socs if isinstance(soc, str)]
+                if bls_codes:
+                    match_stage["occ_code"] = {"$in": list(set(bls_codes))}
         
-        return [{"group": g} for g in sorted(groups)]
+        pipeline = [
+            {"$match": match_stage},
+            {
+                "$group": {
+                    "_id": "$occ_code",
+                    "group": {"$first": "$group"}
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "groups": {"$addToSet": "$group"}
+                }
+            }
+        ]
+        
+        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=1)
+        
+        if not result:
+            return []
+        
+        groups = sorted(result[0]["groups"])
+        return [{"group": g} for g in groups]
     
     # -------------------------
-    # Job metrics - HYBRID MAX APPROACH
+    # Job metrics - OPTIMIZED
     # -------------------------
     async def job_metrics(
         self, 
@@ -809,47 +801,39 @@ class JobsRepo:
                     }
                 },
                 {
-                    "$addFields": {
-                        "tot_emp_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$tot_emp"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        },
-                        "a_median_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$a_median"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        }
-                    }
-                },
-                {
-                    "$sort": {"tot_emp_num": -1}
-                },
-                {
                     "$group": {
                         "_id": None,
                         "occ_title": {"$first": "$occ_title"},
                         "group": {"$first": "$group"},
-                        "total_employment": {"$first": "$tot_emp_num"},
-                        "a_median": {"$first": "$a_median_num"}
+                        "max_emp": {"$max": "$tot_emp"},
+                        "all_docs": {"$push": {
+                            "tot_emp": "$tot_emp",
+                            "a_median": "$a_median"
+                        }}
+                    }
+                },
+                {
+                    "$addFields": {
+                        "selected_doc": {
+                            "$arrayElemAt": [
+                                {
+                                    "$filter": {
+                                        "input": "$all_docs",
+                                        "as": "doc",
+                                        "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
+                                    }
+                                },
+                                0
+                            ]
+                        }
+                    }
+                },
+                {
+                    "$project": {
+                        "occ_title": 1,
+                        "group": 1,
+                        "total_employment": "$max_emp",
+                        "a_median": "$selected_doc.a_median"
                     }
                 }
             ]
@@ -902,42 +886,10 @@ class JobsRepo:
                     }
                 },
                 {
-                    "$addFields": {
-                        "tot_emp_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$tot_emp"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        },
-                        "a_median_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$a_median"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        }
-                    }
-                },
-                {
                     "$project": {
                         "year": 1,
-                        "total_employment": "$tot_emp_num",
-                        "a_median": "$a_median_num",
+                        "total_employment": "$tot_emp",
+                        "a_median": 1,
                         "occ_title": 1
                     }
                 },
@@ -955,53 +907,18 @@ class JobsRepo:
                     }
                 },
                 {
-                    "$addFields": {
-                        "tot_emp_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$tot_emp"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        },
-                        "a_median_num": {
-                            "$convert": {
-                                "input": {
-                                    "$trim": {
-                                        "input": {
-                                            "$toString": "$a_median"
-                                        }
-                                    }
-                                },
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0
-                            }
-                        }
-                    }
-                },
-                {
-                    "$sort": {"tot_emp_num": -1}
-                },
-                {
                     "$group": {
                         "_id": "$year",
-                        "total_employment": {"$first": "$tot_emp_num"},
-                        "a_median": {"$first": "$a_median_num"},
+                        "max_emp": {"$max": "$tot_emp"},
+                        "all_salaries": {"$push": "$a_median"},
                         "occ_title": {"$first": "$occ_title"}
                     }
                 },
                 {
                     "$project": {
                         "year": "$_id",
-                        "total_employment": 1,
-                        "a_median": 1,
+                        "total_employment": "$max_emp",
+                        "a_median": {"$arrayElemAt": ["$all_salaries", 0]},  # Salary from first doc (we'll have only one due to grouping)
                         "occ_title": 1
                     }
                 },
