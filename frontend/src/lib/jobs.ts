@@ -7,7 +7,7 @@ export type JobItem = {
   occ_code: string;
   occ_title: string;
   total_employment: number;
-  median_salary: number | null;
+  a_median: number | null;
   group: string | null;
   jobs_percent?: number | null;
 };
@@ -23,7 +23,7 @@ export type JobDetailMetrics = {
   occ_title: string;
   year: number;
   total_employment: number;
-  median_salary: number | null;
+  a_median: number | null;
   group: string | null;
   naics: string | null;
   naics_title: string | null;
@@ -32,7 +32,7 @@ export type JobDetailMetrics = {
 export type JobYearPoint = {
   year: number;
   total_employment: number;
-  median_salary: number | null;
+  a_median: number | null;
 };
 
 export type JobSummaryResponse = {
@@ -57,14 +57,14 @@ export type JobDashboardMetrics = {
   total_employment: number;
   avg_job_growth_pct: number;
   top_growing_job: TopGrowingJob | null;
-  median_job_salary: number;
+  a_median: number;
 };
 
 export type JobCard = {
   occ_code: string;
   occ_title: string;
   total_employment: number;
-  median_salary: number | null;
+  a_median: number | null;
   growth_pct?: number | null;
   group: string | null;
 };
@@ -88,11 +88,32 @@ export type JobTrendSeries = {
   points: JobTrendPoint[];
 };
 
+export type JobSalaryTrendPoint = {
+  year: number;
+  salary: number;
+};
+
+export type JobSalaryTrendSeries = {
+  occ_code: string;
+  occ_title: string;
+  points: JobSalaryTrendPoint[];
+};
+
 export type JobTopTrendsResponse = {
   year_from: number;
   year_to: number;
   limit: number;
   series: JobTrendSeries[];
+};
+
+export type JobTopCombinedResponse = {
+  year: number;
+  by: "employment" | "salary";
+  limit: number;
+  group: string | null;
+  top_jobs: JobCard[];
+  employment_trends: JobTrendSeries[];
+  salary_trends: JobSalaryTrendSeries[];
 };
 
 export type JobGroupItem = {
@@ -130,7 +151,7 @@ export type JobIndustryJob = {
   occ_code: string;
   occ_title: string;
   employment: number;
-  median_salary: number | null;
+  a_median: number | null;
 };
 
 export type JobIndustryJobsResponse = {
@@ -170,9 +191,17 @@ export const JobsAPI = {
   top: (year: number, limit = 10, by: "employment" | "salary" = "employment", group?: string) =>
     apiGet<JobTopResponse>("/jobs/top", { year, limit, by, group }),
 
-  // Top jobs trends over time
-  topTrends: (year_from = 2019, year_to = 2024, limit = 4, group?: string) =>
-    apiGet<JobTopTrendsResponse>("/jobs/top-trends", { year_from, year_to, limit, group }),
+  // Top jobs employment trends over time
+  topTrends: (year_from = 2011, year_to = 2024, limit = 10, group?: string, sort_by: "employment" | "salary" = "employment") =>
+    apiGet<JobTopTrendsResponse>("/jobs/top-trends", { year_from, year_to, limit, group, sort_by }),
+
+  // Top jobs salary trends over time
+  topSalaryTrends: (year_from = 2011, year_to = 2024, limit = 10, group?: string, sort_by: "employment" | "salary" = "employment") =>
+    apiGet<JobTopTrendsResponse>("/jobs/top-salary-trends", { year_from, year_to, limit, group, sort_by }),
+
+  // Combined top jobs data with both trends
+  topCombined: (year: number, limit = 10, by: "employment" | "salary" = "employment", group?: string) =>
+    apiGet<JobTopCombinedResponse>("/jobs/top-combined", { year, limit, by, group }),
 
   // Job composition by SOC group
   composition: (year: number) =>
@@ -201,6 +230,4 @@ export const JobsAPI = {
       limit,
       offset,
     }),
-
-  
 };

@@ -1,46 +1,79 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { Search, ArrowUpDown } from 'lucide-react';
 
-import { DashboardLayout, useYear } from '@/components/layout';
+import { DashboardLayout } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { HorizontalBarChart, MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 import { JobsAPI } from '@/lib/jobs';
 import type { 
   JobCard,
   JobDashboardMetrics,
-  JobItem
+  JobItem,
+  JobTrendSeries,
+  JobSalaryTrendSeries,
+  JobTopCombinedResponse
 } from '@/lib/jobs';
 
 // ---------- helpers ----------
-const fmtK = (n: number) => `${Math.round(n / 1000)}K`;
-const fmtM = (n: number) => `${(n / 1_000_000).toFixed(1)}M`;
-
-// Chart colors matching original UI
-const CHART_COLORS = {
-  cyan: 'hsl(186 100% 50%)',
-  coral: 'hsl(0 100% 71%)',
-  purple: 'hsl(258 90% 76%)',
-  green: 'hsl(142 76% 45%)',
+const fmtK = (n: number) => {
+  if (n >= 1000) {
+    return `${Math.round(n / 1000)}K`;
+  }
+  return n.toString();
 };
+
+const fmtM = (n: number) => {
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
+  } else if (n >= 1000) {
+    return `${(n / 1000).toFixed(0)}K`;
+  }
+  return n.toString();
+};
+
+// Chart colors array
+const CHART_COLORS = [
+  'hsl(186 100% 50%)',  // cyan
+  'hsl(0 100% 71%)',    // coral
+  'hsl(258 90% 76%)',   // purple
+  'hsl(142 76% 45%)',   // green
+  'hsl(35 100% 60%)',   // amber
+  'hsl(320 100% 70%)',  // pink
+  'hsl(200 100% 60%)',  // blue
+  'hsl(80 70% 50%)',    // lime
+  'hsl(280 80% 70%)',   // lavender
+  'hsl(30 100% 65%)',   // orange
+];
+
+type SortBy = 'employment' | 'salary';
 
 const Jobs = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const { year } = useYear();
+  const [year] = useState(2024);
+  const [sortBy, setSortBy] = useState<SortBy>('employment');
+  const [activeChart, setActiveChart] = useState<'employment' | 'salary'>('employment');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [metrics, setMetrics] = useState<JobDashboardMetrics | null>(null);
   const [allJobs, setAllJobs] = useState<JobItem[]>([]);
-  const [topJobs, setTopJobs] = useState<JobCard[]>([]);
-  const [jobTrends, setJobTrends] = useState<any[]>([]);
+  const [combinedData, setCombinedData] = useState<JobTopCombinedResponse | null>(null);
 
+  // Load all data when sortBy changes
   useEffect(() => {
     let cancelled = false;
 
@@ -49,42 +82,36 @@ const Jobs = () => {
       setError(null);
 
       try {
-        const yearFrom = Math.max(2019, year - 5);
+        console.log('Fetching jobs data...');
         
-        const [m, jobsList, top, trends] = await Promise.all([
+        // Load all data in parallel
+        const [m, jobsList, combined] = await Promise.all([
           JobsAPI.dashboardMetrics(year),
           JobsAPI.list({ year, limit: 1000 }),
-          JobsAPI.top(year, 10, 'employment'),
-          JobsAPI.topTrends(yearFrom, year, 4),
+          JobsAPI.topCombined(year, 10, sortBy),
         ]);
 
         if (cancelled) return;
 
+        console.log('Dashboard metrics:', m);
+        console.log('Jobs list sample:', jobsList.jobs.slice(0, 3));
+        console.log('Combined data:', combined);
+
         setMetrics(m);
-        setAllJobs(jobsList.jobs);
-        setTopJobs(top.jobs);
-
-        // Process trend data to match original UI format
-        const series = trends.series || [];
-        const years = new Set<number>();
-        for (const s of series) for (const p of s.points) years.add(p.year);
         
-        const sortedYears = Array.from(years).sort((a, b) => a - b);
-        
-        // Map to original job trend format
-        const trendRows = sortedYears.map((y) => {
-          const row: any = { year: y };
-          series.forEach((s, index) => {
-            const key = index === 0 ? 'softwareEng' : 
-                       index === 1 ? 'dataSci' : 
-                       index === 2 ? 'nurse' : 'pm';
-            const point = s.points.find((p) => p.year === y);
-            row[key] = point ? point.employment : 0;
-          });
-          return row;
+        // Sort all jobs by the current sort criteria
+        const sortedJobs = [...jobsList.jobs].sort((a, b) => {
+          if (sortBy === 'employment') {
+            return b.total_employment - a.total_employment;
+          } else {
+            const aSalary = a.a_median || 0;
+            const bSalary = b.a_median || 0;
+            return bSalary - aSalary;
+          }
         });
-
-        setJobTrends(trendRows);
+        
+        setAllJobs(sortedJobs);
+        setCombinedData(combined);
       } catch (e: any) {
         if (cancelled) return;
         setError(e?.message || 'Failed to load jobs data');
@@ -99,12 +126,12 @@ const Jobs = () => {
     return () => {
       cancelled = true;
     };
-  }, [year]);
+  }, [year, sortBy]);
 
   // Filter jobs based on search
   const filteredJobs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return allJobs.slice(0, 30); // Show first 30 by default
+    if (!q) return allJobs.slice(0, 30);
     
     return allJobs
       .filter((job) =>
@@ -116,22 +143,23 @@ const Jobs = () => {
 
   // Format top jobs for horizontal bar chart
   const chartData = useMemo(() => {
-    return topJobs.slice(0, 5).map((job) => ({
+    if (!combinedData) return [];
+    return combinedData.top_jobs.map((job) => ({
       name: job.occ_title.length > 25 
         ? job.occ_title.substring(0, 25) + '...' 
         : job.occ_title,
       value: job.total_employment,
-      secondaryValue: job.median_salary || 0,
+      secondaryValue: job.a_median || 0,
     }));
-  }, [topJobs]);
+  }, [combinedData]);
 
-  // Format metrics to match original UI structure
+  // Format metrics
   const dashboardMetrics = useMemo(() => {
     if (!metrics) return [];
     
     return [
       {
-        title: 'Total Job Postings',
+        title: 'Total Employment',
         value: metrics.total_employment,
         trend: { value: metrics.avg_job_growth_pct, direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
         color: 'cyan' as const,
@@ -140,7 +168,7 @@ const Jobs = () => {
       {
         title: 'Unique Job Titles',
         value: metrics.total_jobs,
-        trend: { value: 2.5, direction: 'up' as const }, // Placeholder - calculate from year-over-year
+        trend: { value: Math.abs(metrics.avg_job_growth_pct), direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
         color: 'purple' as const,
       },
       {
@@ -151,22 +179,77 @@ const Jobs = () => {
       },
       {
         title: 'Mean Salary',
-        value: metrics.median_job_salary * 1.15, // Approximate mean from median
+        value: metrics.a_median * 1.15,
         prefix: '$',
-        trend: { value: 3.2, direction: 'up' as const }, // Placeholder
+        trend: { value: 3.2, direction: 'up' as const },
         color: 'coral' as const,
         format: fmtK,
       },
       {
         title: 'Median Salary',
-        value: metrics.median_job_salary,
+        value: metrics.a_median,
         prefix: '$',
-        trend: { value: 2.8, direction: 'up' as const }, // Placeholder
+        trend: { value: 2.8, direction: 'up' as const },
         color: 'amber' as const,
         format: fmtK,
       },
     ];
   }, [metrics]);
+
+  // Prepare employment trend data
+  const employmentTrendData = useMemo(() => {
+    if (!combinedData?.employment_trends?.length) return [];
+    
+    const years = new Set<number>();
+    combinedData.employment_trends.forEach(series => {
+      series.points.forEach(point => years.add(point.year));
+    });
+    
+    const sortedYears = Array.from(years).sort((a, b) => a - b);
+    
+    return sortedYears.map(year => {
+      const row: any = { year };
+      combinedData.employment_trends.forEach((series) => {
+        const point = series.points.find(p => p.year === year);
+        row[series.occ_code] = point ? point.employment : 0;
+      });
+      return row;
+    });
+  }, [combinedData]);
+
+  // Prepare salary trend data
+  const salaryTrendData = useMemo(() => {
+    if (!combinedData?.salary_trends?.length) return [];
+    
+    const years = new Set<number>();
+    combinedData.salary_trends.forEach(series => {
+      series.points.forEach(point => years.add(point.year));
+    });
+    
+    const sortedYears = Array.from(years).sort((a, b) => a - b);
+    
+    return sortedYears.map(year => {
+      const row: any = { year };
+      combinedData.salary_trends.forEach((series) => {
+        const point = series.points.find(p => p.year === year);
+        row[series.occ_code] = point ? point.salary : 0;
+      });
+      return row;
+    });
+  }, [combinedData]);
+
+  // Generate line configurations for charts
+  const chartLines = useMemo(() => {
+    if (!combinedData?.top_jobs) return [];
+    
+    return combinedData.top_jobs.slice(0, 10).map((job, index) => ({
+      key: job.occ_code,
+      name: job.occ_title.length > 20 
+        ? job.occ_title.substring(0, 20) + '...' 
+        : job.occ_title,
+      color: CHART_COLORS[index % CHART_COLORS.length],
+    }));
+  }, [combinedData]);
 
   if (loading) {
     return (
@@ -225,11 +308,27 @@ const Jobs = () => {
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Top Jobs Overall */}
           <Card className="glass-card">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <SectionHeader
                 title="Top Jobs Overall"
-                subtitle="Postings count with median salary overlay"
+                subtitle={`Sorted by ${sortBy === 'employment' ? 'job postings' : 'median salary'}`}
               />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-2">
+                    <ArrowUpDown className="h-4 w-4" />
+                    Sort by: {sortBy === 'employment' ? 'Job Postings' : 'Median Salary'}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setSortBy('employment')}>
+                    Job Postings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSortBy('salary')}>
+                    Median Salary
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </CardHeader>
             <CardContent>
               {chartData.length > 0 ? (
@@ -247,48 +346,51 @@ const Jobs = () => {
             </CardContent>
           </Card>
 
-          {/* Employment Over Time */}
+          {/* Combined Trends Card */}
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
-                title="Employment per Job Over Time"
-                subtitle="Historical employment trends for top roles"
+                title="Job Trends Over Time"
+                subtitle={`Top ${combinedData?.top_jobs.length || 0} jobs by ${sortBy === 'employment' ? 'job postings' : 'median salary'} (2011-2024)`}
               />
             </CardHeader>
             <CardContent>
-              {jobTrends.length > 0 ? (
-                <MultiLineChart
-                  data={jobTrends}
-                  xAxisKey="year"
-                  lines={[
-                    { 
-                      key: 'softwareEng', 
-                      name: topJobs[0]?.occ_title || 'Software Engineer', 
-                      color: CHART_COLORS.cyan 
-                    },
-                    { 
-                      key: 'dataSci', 
-                      name: topJobs[1]?.occ_title || 'Data Scientist', 
-                      color: CHART_COLORS.coral 
-                    },
-                    { 
-                      key: 'nurse', 
-                      name: topJobs[2]?.occ_title || 'Registered Nurse', 
-                      color: CHART_COLORS.purple 
-                    },
-                    { 
-                      key: 'pm', 
-                      name: topJobs[3]?.occ_title || 'Product Manager', 
-                      color: CHART_COLORS.green 
-                    },
-                  ]}
-                  height={350}
-                />
-              ) : (
-                <div className="text-muted-foreground text-center py-8">
-                  No trend data available
-                </div>
-              )}
+              <Tabs defaultValue="employment" className="w-full" onValueChange={(v) => setActiveChart(v as 'employment' | 'salary')}>
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="employment">Employment Trends</TabsTrigger>
+                  <TabsTrigger value="salary">Salary Trends</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="employment">
+                  {employmentTrendData.length > 0 && chartLines.length > 0 ? (
+                    <MultiLineChart
+                      data={employmentTrendData}
+                      xAxisKey="year"
+                      lines={chartLines}
+                      height={300}
+                    />
+                  ) : (
+                    <div className="text-muted-foreground text-center py-8">
+                      No employment trend data available
+                    </div>
+                  )}
+                </TabsContent>
+                
+                <TabsContent value="salary">
+                  {salaryTrendData.length > 0 && chartLines.length > 0 ? (
+                    <MultiLineChart
+                      data={salaryTrendData}
+                      xAxisKey="year"
+                      lines={chartLines}
+                      height={300}
+                    />
+                  ) : (
+                    <div className="text-muted-foreground text-center py-8">
+                      No salary trend data available
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </div>
@@ -298,7 +400,7 @@ const Jobs = () => {
           <CardHeader className="flex flex-row items-center justify-between">
             <SectionHeader
               title="All Job Titles"
-              subtitle="Click a job to view skills, requirements, and trends"
+              subtitle={`Sorted by ${sortBy === 'employment' ? 'job postings (descending)' : 'median salary (descending)'}`}
             />
             {allJobs.length > 30 && (
               <Button 
@@ -331,7 +433,7 @@ const Jobs = () => {
                     </div>
                     <div className="text-right">
                       <p className="text-lg font-semibold text-cyan">
-                        ${fmtK(job.median_salary || 0)}
+                        ${job.a_median ? fmtK(job.a_median) : 'N/A'}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         median salary

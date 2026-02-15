@@ -63,13 +63,279 @@ class JobDetailRepo:
     def __init__(self, db: "AgnosticDatabase"):
         self.db = db
     
-    async def get_job_by_occ_code(self, occ_code: str) -> Optional[Dict[str, Any]]:
-        """Get basic job info from bls_oews collection"""
-        doc = await self.db["bls_oews"].find_one(
-            {"occ_code": occ_code},
-            {"_id": 0, "occ_code": 1, "occ_title": 1, "year": 1, "tot_emp": 1, "a_median": 1}
+    async def get_job_by_occ_code(self, occ_code: str, year: int = 2024) -> Optional[Dict[str, Any]]:
+        """
+        Get basic job info from bls_oews collection using MAX tot_emp approach
+        This ensures consistency with the jobs page
+        """
+        # Use MAX tot_emp approach to get the best document for this occupation
+        pipeline = [
+            {
+                "$match": {
+                    "occ_code": occ_code,
+                    "year": year
+                }
+            },
+            {
+                "$addFields": {
+                    "tot_emp_num": {
+                        "$convert": {
+                            "input": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": "$tot_emp"
+                                    }
+                                }
+                            },
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0
+                        }
+                    },
+                    "a_median_num": {
+                        "$convert": {
+                            "input": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": "$a_median"
+                                    }
+                                }
+                            },
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0
+                        }
+                    }
+                }
+            },
+            {
+                "$sort": {"tot_emp_num": -1}  # Sort by employment descending
+            },
+            {
+                "$limit": 1  # Take the document with highest tot_emp
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "occ_code": 1,
+                    "occ_title": 1,
+                    "tot_emp": "$tot_emp_num",
+                    "a_median": "$a_median_num",
+                    "group": 1
+                }
+            }
+        ]
+        
+        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=1)
+        
+        if result:
+            doc = result[0]
+            return {
+                "occ_code": occ_code,
+                "occ_title": str(doc.get("occ_title", "")),
+                "tot_emp": doc.get("tot_emp", 0),
+                "a_median": doc.get("a_median", 0),
+                "group": doc.get("group")
+            }
+        return None
+    
+    async def get_job_growth_trend(self, occ_code: str) -> float:
+        """
+        Calculate job growth percentage by comparing current year with previous year
+        Uses MAX tot_emp for each year to handle duplicates
+        """
+        # Get the two most recent years with data using MAX per year
+        pipeline = [
+            {
+                "$match": {
+                    "occ_code": occ_code
+                }
+            },
+            {
+                "$addFields": {
+                    "tot_emp_num": {
+                        "$convert": {
+                            "input": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": "$tot_emp"
+                                    }
+                                }
+                            },
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0
+                        }
+                    }
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$year",
+                    "max_emp": {"$max": "$tot_emp_num"}  # Take MAX per year
+                }
+            },
+            {
+                "$project": {
+                    "year": "$_id",
+                    "employment": "$max_emp"
+                }
+            },
+            {
+                "$sort": {"year": -1}
+            },
+            {
+                "$limit": 2
+            }
+        ]
+        
+        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=2)
+        
+        if len(result) < 2:
+            return 0.0
+        
+        current_year = result[0]
+        prev_year = result[1]
+        
+        current_emp = _to_float(current_year.get("employment", 0))
+        prev_emp = _to_float(prev_year.get("employment", 0))
+        
+        if prev_emp == 0:
+            return 0.0
+        
+        growth_pct = ((current_emp - prev_emp) / prev_emp) * 100
+        return round(growth_pct, 1)
+    
+    async def get_job_salary_trend(self, occ_code: str) -> float:
+        """
+        Calculate salary growth percentage
+        Uses salary from document with MAX tot_emp for each year
+        """
+        pipeline = [
+            {
+                "$match": {
+                    "occ_code": occ_code
+                }
+            },
+            {
+                "$addFields": {
+                    "tot_emp_num": {
+                        "$convert": {
+                            "input": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": "$tot_emp"
+                                    }
+                                }
+                            },
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0
+                        }
+                    },
+                    "a_median_num": {
+                        "$convert": {
+                            "input": {
+                                "$trim": {
+                                    "input": {
+                                        "$toString": "$a_median"
+                                    }
+                                }
+                            },
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0
+                        }
+                    }
+                }
+            },
+            {
+                "$sort": {"tot_emp_num": -1}  # Sort by employment descending
+            },
+            {
+                "$group": {
+                    "_id": "$year",
+                    "salary": {"$first": "$a_median_num"},  # Take salary from doc with max employment
+                    "year": {"$first": "$year"}
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "year": 1,
+                    "salary": 1
+                }
+            },
+            {
+                "$sort": {"year": -1}
+            },
+            {
+                "$limit": 2
+            }
+        ]
+        
+        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=2)
+        
+        if len(result) < 2:
+            return 0.0
+        
+        current_year = result[0]
+        prev_year = result[1]
+        
+        current_salary = _to_float(current_year.get("salary", 0))
+        prev_salary = _to_float(prev_year.get("salary", 0))
+        
+        if prev_salary == 0:
+            return 0.0
+        
+        growth_pct = ((current_salary - prev_salary) / prev_salary) * 100
+        return round(growth_pct, 1)
+    
+    async def get_experience_required(self, onet_soc: str) -> str:
+        """Get experience required from education/training data"""
+        # Try to find experience data
+        doc = await self.db["education_training_experience"].find_one(
+            {
+                "onet_soc": onet_soc,
+                "element_name": "Related Work Experience"
+            },
+            {"_id": 0, "data_value": 1, "category": 1}
         )
-        return doc
+        
+        if doc:
+            value = _to_float(doc.get("data_value", 0))
+            # Map value to experience description
+            if value >= 8:
+                return "10+ years"
+            elif value >= 7:
+                return "8-10 years"
+            elif value >= 6:
+                return "6-8 years"
+            elif value >= 5:
+                return "4-6 years"
+            elif value >= 4:
+                return "2-4 years"
+            elif value >= 3:
+                return "1-2 years"
+            elif value >= 2:
+                return "6 months - 1 year"
+            elif value >= 1:
+                return "Less than 6 months"
+            else:
+                return "None"
+        
+        return "Not specified"
+    
+    async def get_skill_intensity(self, onet_soc: str) -> float:
+        """Calculate average skill intensity (average of top skills)"""
+        skills = await self.get_skills(onet_soc)
+        if skills:
+            # Get average of top 10 skills
+            top_skills = skills[:10]
+            avg_value = sum(s["value"] for s in top_skills) / len(top_skills)
+            # Convert to 0-10 scale
+            return round(avg_value / 10, 1)
+        return 0.0
     
     async def get_onet_soc(self, occ_code: str) -> Optional[str]:
         """
@@ -321,11 +587,11 @@ class JobDetailRepo:
     # -------------------------
     # Complete job detail
     # -------------------------
-    async def get_complete_job_detail(self, occ_code: str) -> Dict[str, Any]:
+    async def get_complete_job_detail(self, occ_code: str, year: int = 2024) -> Dict[str, Any]:
         """Get complete job details from all O*NET collections"""
         
-        # Get basic job info from BLS
-        basic_info = await self.get_job_by_occ_code(occ_code)
+        # Get basic job info from BLS using MAX approach (matches jobs page)
+        basic_info = await self.get_job_by_occ_code(occ_code, year)
         
         # Get O*NET SOC code
         onet_soc = await self.get_onet_soc(occ_code)
@@ -334,9 +600,9 @@ class JobDetailRepo:
         if not onet_soc and basic_info:
             title = basic_info.get("occ_title", "")
             onet_soc = await self.find_onet_soc_by_title(title)
-            print(f"🔍 Found by title: {title} -> {onet_soc}")  # Debug log
+            print(f"🔍 Found by title: {title} -> {onet_soc}")
         
-        print(f"🔍 OCC Code: {occ_code} -> ONET SOC: {onet_soc}")  # Debug log
+        print(f"🔍 OCC Code: {occ_code} -> ONET SOC: {onet_soc}")
         
         # Initialize with empty data
         result = {
@@ -368,6 +634,7 @@ class JobDetailRepo:
         
         print(f"📊 Fetching data for ONET SOC: {onet_soc}")
         
+        # Fetch O*NET data
         skills_task = self.get_skills(onet_soc)
         tech_skills_task = self.get_technology_skills(onet_soc)
         tools_task = self.get_tools(onet_soc)
@@ -376,9 +643,16 @@ class JobDetailRepo:
         education_task = self.get_education(onet_soc)
         activities_task = self.get_work_activities(onet_soc)
         
-        skills, tech_skills, tools, abilities, knowledge, education, activities = await asyncio.gather(
+        # Fetch trend data (using MAX approach)
+        growth_trend_task = self.get_job_growth_trend(occ_code)
+        salary_trend_task = self.get_job_salary_trend(occ_code)
+        experience_task = self.get_experience_required(onet_soc)
+        skill_intensity_task = self.get_skill_intensity(onet_soc)
+        
+        skills, tech_skills, tools, abilities, knowledge, education, activities, growth_trend, salary_trend, experience, skill_intensity = await asyncio.gather(
             skills_task, tech_skills_task, tools_task, abilities_task, 
-            knowledge_task, education_task, activities_task
+            knowledge_task, education_task, activities_task,
+            growth_trend_task, salary_trend_task, experience_task, skill_intensity_task
         )
         
         print(f"✅ Skills found: {len(skills)}")
@@ -387,6 +661,8 @@ class JobDetailRepo:
         print(f"✅ Knowledge found: {len(knowledge)}")
         print(f"✅ Activities found: {len(activities)}")
         print(f"✅ Education found: {education is not None}")
+        print(f"📊 Growth trend: {growth_trend}%")
+        print(f"📊 Salary trend: {salary_trend}%")
         
         # Categorize skills
         all_skills = skills
@@ -406,39 +682,46 @@ class JobDetailRepo:
             else:
                 skill["type"] = "general"
         
-        # Generate metrics from BLS data
+        # Generate metrics from real data (matches jobs page format)
         metrics = []
         if basic_info:
+            total_employment = _to_float(basic_info.get("tot_emp", 0))
+            median_salary = _to_float(basic_info.get("a_median", 0))
+            
+            # Format trend direction
+            growth_direction = "up" if growth_trend >= 0 else "down"
+            salary_direction = "up" if salary_trend >= 0 else "down"
+            
             metrics = [
                 {
-                    "title": "Total Postings",
-                    "value": _to_float(basic_info.get("tot_emp", 0)),
-                    "trend": {"value": 5.2, "direction": "up"},
+                    "title": "Total Employment",
+                    "value": total_employment,
+                    "trend": {"value": abs(growth_trend), "direction": growth_direction},
                     "color": "cyan",
-                    "format": "fmtK"
+                    "format": "fmtM"
                 },
                 {
                     "title": "Job Trend",
-                    "value": "+5.2%",
-                    "trend": {"value": 2.5, "direction": "up"},
+                    "value": f"{growth_trend:+.1f}%",
+                    "trend": {"value": abs(growth_trend), "direction": growth_direction},
                     "color": "green"
                 },
                 {
                     "title": "Experience Required",
-                    "value": "3-5 years",
+                    "value": experience,
                     "color": "purple"
                 },
                 {
                     "title": "Skill Intensity",
-                    "value": "8.2",
+                    "value": str(skill_intensity),
                     "suffix": "/10",
                     "color": "coral"
                 },
                 {
                     "title": "Median Annual Salary",
-                    "value": _to_float(basic_info.get("a_median", 0)),
+                    "value": median_salary,
                     "prefix": "$",
-                    "trend": {"value": 5.2, "direction": "up"},
+                    "trend": {"value": abs(salary_trend), "direction": salary_direction},
                     "color": "amber",
                     "format": "fmtK"
                 }
