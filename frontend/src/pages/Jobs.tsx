@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
-import { DashboardLayout } from '@/components/layout';
+import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { HorizontalBarChart, MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -31,7 +31,7 @@ const CHART_COLORS = {
 const Jobs = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [year] = useState(2024);
+  const { year } = useYear();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

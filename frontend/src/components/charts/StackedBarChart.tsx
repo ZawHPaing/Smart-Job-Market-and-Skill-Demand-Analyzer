@@ -23,32 +23,88 @@ interface StackedBarChartProps {
    */
   labelKey?: string;
   tooltipLabelKey?: string;
+
+  /**
+   * ✅ NEW:
+   * If your row contains occupation titles, e.g.
+   *   occ1_title, occ2_title, occ3_title
+   * Tooltip will show them per segment.
+   *
+   * Default prefix: "occ"
+   * For bar index i (0-based) it reads: `${prefix}${i+1}_title`
+   */
+  segmentTitleKeyPrefix?: string;
 }
 
 const fmtAxis = (v: number) =>
-  v >= 1_000_000 ? `${(v / 1_000_000).toFixed(0)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(0)}K` : `${v}`;
+  v >= 1_000_000
+    ? `${(v / 1_000_000).toFixed(0)}M`
+    : v >= 1_000
+      ? `${(v / 1_000).toFixed(0)}K`
+      : `${v}`;
+
+function getSegmentTitleFromRow(
+  row: any,
+  segmentIndex: number,
+  prefix: string
+): string | null {
+  const key = `${prefix}${segmentIndex + 1}_title`; // occ1_title, occ2_title...
+  const val = row?.[key];
+  if (!val) return null;
+  const s = String(val).trim();
+  return s.length ? s : null;
+}
 
 const CustomTooltip =
-  ({ tooltipLabelKey }: { tooltipLabelKey?: string }) =>
+  ({
+    tooltipLabelKey,
+    segmentTitleKeyPrefix = "occ",
+  }: {
+    tooltipLabelKey?: string;
+    segmentTitleKeyPrefix?: string;
+  }) =>
   ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
 
     // prefer full label from the row if available
     const row = payload?.[0]?.payload;
-    const title = tooltipLabelKey && row?.[tooltipLabelKey] ? row[tooltipLabelKey] : label;
+    const title =
+      tooltipLabelKey && row?.[tooltipLabelKey] ? row[tooltipLabelKey] : label;
 
     return (
-      <div className="glass-card px-3 py-2 max-w-[360px]">
+      <div className="glass-card px-3 py-2 max-w-[420px]">
         <p className="text-sm font-medium mb-2 break-words">{title}</p>
-        {payload.map((entry: any, index: number) => (
-          <p key={index} className="text-sm flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-            <span className="text-muted-foreground">{entry.name}: </span>
-            <span className="font-medium" style={{ color: entry.color }}>
-              {Number(entry.value || 0).toLocaleString()}
-            </span>
-          </p>
-        ))}
+
+        {payload.map((entry: any, index: number) => {
+          // ✅ Try to show occupation title per segment
+          const occTitle = getSegmentTitleFromRow(
+            row,
+            index,
+            segmentTitleKeyPrefix
+          );
+
+          // If not present, fall back to legend name (e.g. "Top Occupation #1")
+          const leftLabel = occTitle ? occTitle : entry.name;
+
+          return (
+            <div key={index} className="text-sm mb-1">
+              <div className="flex items-start gap-2">
+                <span
+                  className="w-2 h-2 rounded-full mt-1.5 shrink-0"
+                  style={{ backgroundColor: entry.color }}
+                />
+                <div className="min-w-0">
+                  <p className="text-muted-foreground break-words">
+                    {leftLabel}
+                  </p>
+                  <p className="font-medium" style={{ color: entry.color }}>
+                    {Number(entry.value || 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -60,6 +116,7 @@ export function StackedBarChart({
   height = 300,
   labelKey,
   tooltipLabelKey,
+  segmentTitleKeyPrefix = "occ",
 }: StackedBarChartProps) {
   const axisKey = labelKey || xAxisKey;
 
@@ -68,7 +125,6 @@ export function StackedBarChart({
       <RechartsBarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 40 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 20%)" />
 
-        {/* ✅ clean axis labels */}
         <XAxis
           dataKey={axisKey}
           interval={0}
@@ -84,13 +140,22 @@ export function StackedBarChart({
           tickFormatter={(v) => fmtAxis(Number(v))}
         />
 
-        <Tooltip content={CustomTooltip({ tooltipLabelKey }) as any} />
+        <Tooltip
+          content={
+            CustomTooltip({
+              tooltipLabelKey,
+              segmentTitleKeyPrefix,
+            }) as any
+          }
+        />
 
         <Legend
           verticalAlign="bottom"
           iconType="circle"
           iconSize={8}
-          formatter={(value) => <span className="text-sm text-muted-foreground">{value}</span>}
+          formatter={(value) => (
+            <span className="text-sm text-muted-foreground">{value}</span>
+          )}
         />
 
         {bars.map((bar, index) => (

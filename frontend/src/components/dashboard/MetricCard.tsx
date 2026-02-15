@@ -8,6 +8,19 @@ interface MetricCardProps extends Omit<MetricCardType, 'id'> {
   delay?: number;
 }
 
+function toNumber(val: unknown): number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+
+  // handle strings like "$78,500", "+8.5%", "131.8M", etc.
+  const s = String(val).trim();
+  if (!s) return null;
+
+  const cleaned = s.replace(/[^0-9.-]/g, '');
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
 export function MetricCard({
   title,
   value,
@@ -22,8 +35,8 @@ export function MetricCard({
   const [isVisible, setIsVisible] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  const numericValue = typeof value === 'number' ? value : parseFloat(value.toString().replace(/[^0-9.-]/g, ''));
-  const isNumeric = !isNaN(numericValue);
+  const numericValue = toNumber(value);
+  const isNumeric = numericValue !== null;
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -36,10 +49,7 @@ export function MetricCard({
       { threshold: 0.1 }
     );
 
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
-    }
-
+    if (cardRef.current) observer.observe(cardRef.current);
     return () => observer.disconnect();
   }, []);
 
@@ -49,13 +59,13 @@ export function MetricCard({
     const timeout = setTimeout(() => {
       const duration = 1500;
       const steps = 60;
-      const stepValue = numericValue / steps;
+      const stepValue = (numericValue as number) / steps;
       let current = 0;
 
       const interval = setInterval(() => {
         current += stepValue;
-        if (current >= numericValue) {
-          setDisplayValue(numericValue);
+        if (current >= (numericValue as number)) {
+          setDisplayValue(numericValue as number);
           clearInterval(interval);
         } else {
           setDisplayValue(current);
@@ -66,14 +76,11 @@ export function MetricCard({
     }, delay);
 
     return () => clearTimeout(timeout);
-  }, [isVisible, animateValue, numericValue, delay, isNumeric]);
+  }, [isVisible, animateValue, isNumeric, numericValue, delay]);
 
   const formatValue = (val: number) => {
-    if (val >= 1000000) {
-      return (val / 1000000).toFixed(1) + 'M';
-    } else if (val >= 1000) {
-      return (val / 1000).toFixed(val >= 10000 ? 0 : 1) + 'K';
-    }
+    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1) + 'M';
+    if (val >= 1_000) return (val / 1_000).toFixed(val >= 10_000 ? 0 : 1) + 'K';
     return val.toLocaleString('en-US', { maximumFractionDigits: 0 });
   };
 
@@ -93,28 +100,32 @@ export function MetricCard({
     amber: 'text-amber',
   }[color];
 
+  const safeText =
+    value === null || value === undefined || String(value).trim() === '' ? '—' : String(value);
+
   return (
     <div
       ref={cardRef}
-      className={cn(
-        'metric-card',
-        glowClass,
-        isVisible && 'animate-fade-in'
-      )}
+      className={cn('metric-card', glowClass, isVisible && 'animate-fade-in')}
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <p className="text-sm font-medium text-muted-foreground">{title}</p>
+
           <div className="flex items-baseline gap-1">
             {prefix && <span className="text-xl text-muted-foreground">{prefix}</span>}
+
             <span className={cn('counter-value', accentClass)}>
-              {isNumeric ? formatValue(animateValue ? displayValue : numericValue) : value}
+              {isNumeric
+                ? formatValue(animateValue ? displayValue : (numericValue as number))
+                : safeText}
             </span>
+
             {suffix && <span className="text-xl text-muted-foreground">{suffix}</span>}
           </div>
         </div>
-        
+
         {trend && (
           <div
             className={cn(
@@ -132,7 +143,6 @@ export function MetricCard({
         )}
       </div>
 
-      {/* Decorative accent line */}
       <div
         className={cn(
           'absolute bottom-0 left-0 h-1 w-0 rounded-full transition-all duration-500',
