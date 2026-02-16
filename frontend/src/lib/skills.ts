@@ -24,6 +24,7 @@ export type SkillUsageData = {
   color: string;
 };
 
+// UPDATED: Added new fields
 export type CoOccurringSkill = {
   id: string;
   name: string;
@@ -32,6 +33,12 @@ export type CoOccurringSkill = {
   co_occurrence_rate?: number;
   demand_trend?: number;
   salary_association?: number;
+  // Make sure these are all included
+  usage_count?: number;
+  avg_importance?: number;
+  avg_level?: number;
+  hot_technology?: boolean;
+  in_demand?: boolean;
 };
 
 export type JobRequiringSkill = {
@@ -45,6 +52,33 @@ export type JobRequiringSkill = {
   in_demand?: boolean;
 };
 
+// NEW: Network graph node type
+export type NetworkNode = {
+  id: string;
+  name: string;
+  group: string;
+  value: number;
+  usage_count?: number;
+  co_occurrence_rate?: number;
+  avg_importance?: number;
+  avg_level?: number;
+};
+
+// NEW: Network graph link type
+export type NetworkLink = {
+  source: string;
+  target: string;
+  value: number;
+  co_occurrence_rate?: number;
+};
+
+// NEW: Network graph response type
+export type NetworkGraph = {
+  nodes: NetworkNode[];
+  links: NetworkLink[];
+};
+
+// UPDATED: Added network_graph field
 export type SkillDetailResponse = {
   basic_info: SkillBasicInfo;
   metrics: SkillMetric[];
@@ -53,6 +87,8 @@ export type SkillDetailResponse = {
   co_occurring_skills: CoOccurringSkill[];
   top_jobs: JobRequiringSkill[];
   total_jobs_count: number;
+  // NEW FIELD
+  network_graph?: NetworkGraph;  // Optional for backward compatibility
 };
 
 export type SkillSearchResult = {

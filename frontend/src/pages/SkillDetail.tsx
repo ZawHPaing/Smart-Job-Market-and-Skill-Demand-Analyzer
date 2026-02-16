@@ -1,17 +1,17 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Code, Briefcase } from 'lucide-react';
+import { ChevronLeft, Code, Briefcase, TrendingUp, Users } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
-import { DonutChart, SkillNetworkGraph, HorizontalBarChart } from '@/components/charts';
+import { DonutChart, SkillNetworkGraph } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { SkillsAPI } from '@/lib/skills'; // ✅ IMPORTING THE CORRECT API
-import type { SkillDetailResponse, CoOccurringSkill, JobRequiringSkill } from '@/lib/skills';
+import { SkillsAPI } from '@/lib/skills';
+import type { SkillDetailResponse, CoOccurringSkill } from '@/lib/skills';
 
 // Helper functions
 const fmtK = (n: number) => `${Math.round(n / 1000)}K`;
-const fmtPercent = (n: number) => `${Math.round(n)}%`;
+const fmtNumber = (n: number) => n.toLocaleString();
 
 const SkillDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -32,17 +32,14 @@ const SkillDetail = () => {
       setLoading(true);
       setError(null);
 
-      console.log('🟡 Loading skill detail for ID:', id);
-      console.log('🟡 API URL:', `/skills/${encodeURIComponent(id)}`);
-
       try {
-        // ✅ USING THE CORRECT API - SkillsAPI.getDetail, NOT JobDetailAPI
+        console.log('🔍 Fetching skill detail for ID:', id);
         const data = await SkillsAPI.getDetail(id);
         if (cancelled) return;
-        console.log('🟢 Skill detail loaded:', data);
+        console.log('✅ Skill detail received:', data);
         setSkillDetail(data);
       } catch (e: any) {
-        console.error('🔴 Skill detail error:', e);
+        console.error('❌ Skill detail error:', e);
         if (cancelled) return;
         setError(e?.message || 'Failed to load skill details');
       } finally {
@@ -55,6 +52,61 @@ const SkillDetail = () => {
     return () => { cancelled = true; };
   }, [id]);
 
+  // Debug effect to log co-occurring skills data
+  useEffect(() => {
+    if (skillDetail) {
+      console.log('=== SKILL DETAIL DEBUG ===');
+      console.log('Skill name:', skillDetail.basic_info.skill_name);
+      console.log('Skill type:', skillDetail.basic_info.skill_type);
+      console.log('Total jobs count:', skillDetail.total_jobs_count);
+      console.log('Usage percentage:', skillDetail.usage_percentage);
+      
+      console.log('\n📊 CO-OCCURRING SKILLS:');
+      console.log('Array length:', skillDetail.co_occurring_skills?.length || 0);
+      
+      if (skillDetail.co_occurring_skills && skillDetail.co_occurring_skills.length > 0) {
+        console.log('First 5 co-occurring skills:');
+        skillDetail.co_occurring_skills.slice(0, 5).forEach((skill, index) => {
+          console.log(`  ${index + 1}. ${skill.name}:`, {
+            id: skill.id,
+            type: skill.type,
+            frequency: skill.frequency,
+            usage_count: skill.usage_count,
+            co_occurrence_rate: skill.co_occurrence_rate,
+            avg_importance: skill.avg_importance,
+            avg_level: skill.avg_level,
+            hot_technology: skill.hot_technology,
+            in_demand: skill.in_demand
+          });
+        });
+        
+        // Check for skills with co_occurrence_rate > 0
+        const withRates = skillDetail.co_occurring_skills.filter(s => s.co_occurrence_rate && s.co_occurrence_rate > 0);
+        console.log(`\n✅ Skills with co_occurrence_rate > 0: ${withRates.length}/${skillDetail.co_occurring_skills.length}`);
+        
+        if (withRates.length === 0) {
+          console.log('⚠️ No skills have co_occurrence_rate > 0. Checking raw values:');
+          skillDetail.co_occurring_skills.slice(0, 3).forEach((skill, index) => {
+            console.log(`  Raw skill ${index + 1}:`, JSON.stringify(skill, null, 2));
+          });
+        }
+      } else {
+        console.log('⚠️ No co-occurring skills found!');
+      }
+      
+      console.log('\n📈 METRICS:');
+      console.log(skillDetail.metrics);
+      
+      console.log('\n🔗 NETWORK GRAPH:');
+      console.log(skillDetail.network_graph);
+      
+      console.log('\n💼 TOP JOBS:');
+      console.log(skillDetail.top_jobs?.slice(0, 3));
+      
+      console.log('========================\n');
+    }
+  }, [skillDetail]);
+
   // Transform metrics for MetricsGrid
   const metricsGridData = useMemo(() => {
     if (!skillDetail?.metrics) return [];
@@ -64,7 +116,7 @@ const SkillDetail = () => {
       if (metric.format === 'fmtK' && typeof metric.value === 'number') {
         value = fmtK(metric.value);
       } else if (metric.format === 'fmtPercent' && typeof metric.value === 'number') {
-        value = fmtPercent(metric.value);
+        value = `${Math.round(metric.value)}%`;
       }
       
       return {
@@ -89,44 +141,66 @@ const SkillDetail = () => {
 
   // Prepare network graph data
   const networkData = useMemo(() => {
-  if (!skillDetail) {
+    if (!skillDetail) {
+      return {
+        nodes: [{ 
+          id: id || 'skill', 
+          name: 'Skill', 
+          group: '1',
+          value: 20
+        }],
+        links: []
+      };
+    }
+    
+    // Use network_graph if available from API
+    if (skillDetail.network_graph) {
+      return skillDetail.network_graph;
+    }
+    
+    // Fallback to old format
     return {
-      nodes: [{ 
-        id: id || 'skill', 
-        name: 'Skill', 
-        group: '1',  // Changed from number 1 to string '1'
-        value: 20 
-      }],
-      links: []
-    };
-  }
-  
-  return {
-    nodes: [
-      { 
-        id: skillDetail.basic_info.skill_id, 
-        name: skillDetail.basic_info.skill_name, 
-        group: '1',  // Changed from number 1 to string '1'
-        value: 20 
-      },
-      ...skillDetail.co_occurring_skills.slice(0, 5).map((s, i) => ({
-        id: s.id,
-        name: s.name.length > 20 ? s.name.substring(0, 20) + '...' : s.name,
-        group: '2',  // Changed from number 2 to string '2'
-        value: 15 - i
+      nodes: [
+        { 
+          id: skillDetail.basic_info.skill_id, 
+          name: skillDetail.basic_info.skill_name, 
+          group: '1',
+          value: 30
+        },
+        ...skillDetail.co_occurring_skills.slice(0, 10).map((s, i) => ({
+          id: s.id,
+          name: s.name.length > 20 ? s.name.substring(0, 20) + '...' : s.name,
+          group: '2',
+          value: 25 - (i * 1.5)
+        }))
+      ],
+      links: skillDetail.co_occurring_skills.slice(0, 10).map(s => ({
+        source: skillDetail.basic_info.skill_id,
+        target: s.id,
+        value: s.co_occurrence_rate || 50
       }))
-    ],
-    links: skillDetail.co_occurring_skills.slice(0, 5).map(s => ({
-      source: skillDetail.basic_info.skill_id,
-      target: s.id,
-      value: s.co_occurrence_rate || 50
-    }))
-  };
-}, [skillDetail, id]);
+    };
+  }, [skillDetail, id]);
 
   // Get top co-occurring skills for "What to Learn Next"
   const nextSkills = useMemo(() => {
-    return skillDetail?.co_occurring_skills?.slice(0, 4) || [];
+    if (!skillDetail?.co_occurring_skills) {
+      console.log('No co-occurring skills to sort');
+      return [];
+    }
+    
+    console.log('Sorting co-occurring skills for "What to Learn Next"');
+    const sorted = [...skillDetail.co_occurring_skills]
+      .sort((a, b) => (b.co_occurrence_rate || 0) - (a.co_occurrence_rate || 0))
+      .slice(0, 4);
+    
+    console.log('Top 4 skills:', sorted.map(s => ({
+      name: s.name,
+      rate: s.co_occurrence_rate,
+      usage: s.usage_count
+    })));
+    
+    return sorted;
   }, [skillDetail]);
 
   if (loading) {
@@ -259,8 +333,8 @@ const SkillDetail = () => {
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
-                title="Co-Occurring Skills"
-                subtitle="Skills frequently paired with this one"
+                title="Co-Occurring Skills Network"
+                subtitle="Top 10 skills most frequently paired with this one"
               />
             </CardHeader>
             <CardContent className="flex justify-center">
@@ -269,8 +343,8 @@ const SkillDetail = () => {
                   nodes={networkData.nodes}
                   links={networkData.links}
                   centerNode={skillDetail.basic_info.skill_id}
-                  width={350}
-                  height={350}
+                  width={380}
+                  height={380}
                 />
               ) : (
                 <div className="text-muted-foreground text-center py-8">
@@ -281,13 +355,13 @@ const SkillDetail = () => {
           </Card>
         </div>
 
-        {/* What to Learn Next */}
-        {nextSkills.length > 0 && (
+        {/* What to Learn Next - WITH EXACT JOB NUMBERS */}
+        {nextSkills.length > 0 ? (
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
                 title="What Skills to Learn Next?"
-                subtitle="Recommended skills to complement your expertise"
+                subtitle="Top 4 skills most commonly paired with this one"
               />
             </CardHeader>
             <CardContent>
@@ -299,34 +373,95 @@ const SkillDetail = () => {
                     className="group p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-cyan/30 transition-all"
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple/20">
-                        <Briefcase className="h-5 w-5 text-purple" />
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan/20 to-purple/20">
+                        {skill.type === 'tech' ? (
+                          <Code className="h-5 w-5 text-cyan" />
+                        ) : (
+                          <Briefcase className="h-5 w-5 text-purple" />
+                        )}
                       </div>
                       <Badge
                         variant="secondary"
                         className={`text-xs ${
-                          skill.type === 'tech' ? 'bg-cyan/10 text-cyan' : 
-                          skill.type === 'soft' ? 'bg-green/10 text-green' : 
-                          'bg-purple/10 text-purple'
+                          skill.type === 'tech' ? 'bg-cyan/10 text-cyan border-cyan/20' : 
+                          skill.type === 'soft' ? 'bg-green/10 text-green border-green/20' : 
+                          'bg-purple/10 text-purple border-purple/20'
                         }`}
                       >
-                        {skill.type}
+                        {skill.type || 'general'}
                       </Badge>
                     </div>
-                    <h4 className="mt-3 font-medium group-hover:text-cyan transition-colors">
+                    <h4 className="mt-3 font-medium group-hover:text-cyan transition-colors line-clamp-1">
                       {skill.name}
                     </h4>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Co-occurs in {skill.co_occurrence_rate || 0}% of jobs
-                    </p>
-                    {skill.salary_association && (
-                      <p className="text-sm text-green-500">
-                        ${(skill.salary_association / 1000).toFixed(0)}K avg salary
-                      </p>
+                    
+                    {/* Co-occurrence rate with progress bar */}
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Co-occurrence</span>
+                        <span className="font-medium text-cyan">
+                          {skill.co_occurrence_rate ? skill.co_occurrence_rate.toFixed(1) : '0'}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-secondary/50 rounded-full h-1.5">
+                        <div 
+                          className="bg-cyan rounded-full h-1.5 transition-all group-hover:bg-cyan/80" 
+                          style={{ width: `${Math.min(100, skill.co_occurrence_rate || 0)}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* EXACT JOB COUNT - using toLocaleString() */}
+                    {skill.usage_count ? (
+                      <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+                        <Users className="h-3 w-3" />
+                        <span>{skill.usage_count.toLocaleString()} jobs</span>
+                      </div>
+                    ) : skill.frequency ? (
+                      <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
+                        <Users className="h-3 w-3" />
+                        <span>{skill.frequency.toLocaleString()} jobs</span>
+                      </div>
+                    ) : null}
+
+                    {/* For tech skills, show hot/in demand flags instead of importance */}
+                    {skill.type === 'tech' && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {skill.hot_technology && (
+                          <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
+                            🔥 Hot
+                          </Badge>
+                        )}
+                        {skill.in_demand && (
+                          <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
+                            📈 In Demand
+                          </Badge>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Importance indicator for non-tech/tool skills */}
+                    {skill.avg_importance && skill.avg_importance > 0 && skill.type !== 'tech' && skill.type !== 'tool' && (
+                      <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                        <TrendingUp className="h-3 w-3" />
+                        <span>Importance: {Math.round(skill.avg_importance)}%</span>
+                      </div>
                     )}
                   </Link>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="glass-card">
+            <CardHeader>
+              <SectionHeader
+                title="What Skills to Learn Next?"
+                subtitle="No co-occurring skills data available"
+              />
+            </CardHeader>
+            <CardContent className="text-center text-muted-foreground py-4">
+              No related skills found for this skill.
             </CardContent>
           </Card>
         )}
@@ -337,7 +472,7 @@ const SkillDetail = () => {
             <CardHeader>
               <SectionHeader
                 title="Top Jobs Using This Skill"
-                subtitle="Roles where this skill is highly valued"
+                subtitle="Roles where this skill is most important"
               />
             </CardHeader>
             <CardContent>
@@ -348,17 +483,22 @@ const SkillDetail = () => {
                     to={`/jobs/${job.soc_code.replace('.00', '')}`}
                     className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors group"
                   >
-                    <div>
-                      <p className="font-medium group-hover:text-cyan transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium group-hover:text-cyan transition-colors truncate">
                         {job.title}
                       </p>
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <span>Importance: {Math.round(job.importance || 0)}%</span>
-                        {job.level && <span>• Level: {Math.round(job.level)}%</span>}
+                        {job.level && (
+                          <>
+                            <span>•</span>
+                            <span>Level: {Math.round(job.level)}%</span>
+                          </>
+                        )}
                       </div>
                     </div>
                     {job.median_salary && (
-                      <span className="text-cyan font-medium">
+                      <span className="text-cyan font-medium ml-2">
                         ${(job.median_salary / 1000).toFixed(0)}K
                       </span>
                     )}
@@ -388,6 +528,12 @@ const SkillDetail = () => {
                 </p>
                 <p className="text-xs">
                   <span className="font-bold">Co-occurring Skills:</span> {skillDetail.co_occurring_skills.length}
+                </p>
+                <p className="text-xs">
+                  <span className="font-bold">Network Graph Nodes:</span> {networkData.nodes.length}
+                </p>
+                <p className="text-xs">
+                  <span className="font-bold">Network Graph Links:</span> {networkData.links.length}
                 </p>
                 <p className="text-xs">
                   <span className="font-bold">Top Jobs:</span> {skillDetail.top_jobs.length}

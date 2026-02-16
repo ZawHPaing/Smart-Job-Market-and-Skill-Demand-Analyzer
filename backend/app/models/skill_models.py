@@ -16,7 +16,7 @@ class SkillMetric(BaseModel):
 class SkillBasicInfo(BaseModel):
     skill_id: str
     skill_name: str
-    skill_type: Literal["tech", "soft", "general", "ability", "knowledge", "work_activity", "tool"]
+    skill_type: Literal["tech", "soft", "general", "ability", "knowledge", "work_activity", "tool", "skill"]
     classification: List[str]
     description: Optional[str] = None
 
@@ -27,13 +27,21 @@ class SkillUsageData(BaseModel):
     color: str
 
 
+# UPDATED: Added all new fields
 class CoOccurringSkill(BaseModel):
     id: str
     name: str
     type: str
-    frequency: float
+    frequency: int
+    co_occurrence_rate: Optional[float] = None
     demand_trend: Optional[float] = 0
     salary_association: Optional[float] = 0
+    # NEW FIELDS - make sure these are included
+    usage_count: Optional[int] = None
+    avg_importance: Optional[float] = None
+    avg_level: Optional[float] = None
+    hot_technology: Optional[bool] = False
+    in_demand: Optional[bool] = False
 
 
 class JobRequiringSkill(BaseModel):
@@ -43,6 +51,31 @@ class JobRequiringSkill(BaseModel):
     level: Optional[float] = None
     median_salary: Optional[float] = None
     employment: Optional[float] = None
+    hot_technology: Optional[bool] = False
+    in_demand: Optional[bool] = False
+
+
+class NetworkNode(BaseModel):
+    id: str
+    name: str
+    group: str
+    value: float
+    usage_count: Optional[int] = None
+    co_occurrence_rate: Optional[float] = None
+    avg_importance: Optional[float] = None
+    avg_level: Optional[float] = None
+
+
+class NetworkLink(BaseModel):
+    source: str
+    target: str
+    value: float
+    co_occurrence_rate: Optional[float] = None
+
+
+class NetworkGraph(BaseModel):
+    nodes: List[NetworkNode]
+    links: List[NetworkLink]
 
 
 class SkillDetailResponse(BaseModel):
@@ -53,3 +86,4 @@ class SkillDetailResponse(BaseModel):
     co_occurring_skills: List[CoOccurringSkill]
     top_jobs: List[JobRequiringSkill]
     total_jobs_count: int
+    network_graph: Optional[NetworkGraph] = None

@@ -106,6 +106,37 @@ class SkillRepo:
         return None
     
     # -------------------------
+    # Get Tech Skill Flags
+    # -------------------------
+    async def get_tech_skill_flags(self, skill_name: str) -> Dict[str, bool]:
+        """
+        Get hot_technology and in_demand flags for technology skills
+        """
+        if not skill_name:
+            return {"hot_technology": False, "in_demand": False}
+        
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (j:Job)-[r:REQUIRES]->(s:Skill {name: $skill_name})
+                WHERE r.Hot_Technology IS NOT NULL OR r.In_Demand IS NOT NULL
+                RETURN r.Hot_Technology AS hot_technology,
+                       r.In_Demand AS in_demand
+                LIMIT 1
+                """,
+                skill_name=skill_name
+            )
+            record = await result.single()
+            
+            if record:
+                return {
+                    "hot_technology": record.get("hot_technology", False) or False,
+                    "in_demand": record.get("in_demand", False) or False
+                }
+        
+        return {"hot_technology": False, "in_demand": False}
+    
+    # -------------------------
     # Get Skill Metrics
     # -------------------------
     async def get_skill_metrics(self, skill_name: str) -> Dict[str, Any]:
@@ -222,37 +253,66 @@ class SkillRepo:
             }
     
     # -------------------------
-    # Get Co-occurring Skills
-    # -------------------------
+# Get Co-occurring Skills - FIXED to properly calculate averages
+# -------------------------
     async def get_co_occurring_skills(
         self, 
         skill_name: str, 
-        limit: int = 6
+        limit: int = 10
     ) -> List[Dict[str, Any]]:
         """
-        Get skills that frequently appear together with this skill
+        Get skills that frequently appear together with this skill.
         """
         if not skill_name:
             return []
             
         async with self.driver.session() as session:
-            # First, get total jobs for each skill for rate calculation
             result = await session.run(
                 """
-                MATCH (s1:Skill {name: $skill_name})<-[:REQUIRES]-(j:Job)-[:REQUIRES]->(s2:Skill)
+                // Find jobs that require the target skill
+                MATCH (s1:Skill {name: $skill_name})<-[:REQUIRES]-(j:Job)
+                
+                // Find other skills required by those same jobs
+                MATCH (j)-[r2:REQUIRES]->(s2:Skill)
                 WHERE s1.name <> s2.name
-                WITH s2, count(DISTINCT j) AS frequency
+                
+                // Aggregate by skill to avoid duplicates
+                WITH s2, 
+                    COLLECT(DISTINCT j) AS jobs,
+                    COLLECT(r2) AS relationships
+                WITH s2, 
+                    SIZE(jobs) AS co_occurrence_frequency,
+                    REDUCE(s = 0.0, rel IN relationships | s + rel.importance) / SIZE(relationships) AS avg_importance,
+                    REDUCE(s = 0.0, rel IN relationships | s + rel.level) / SIZE(relationships) AS avg_level
+                
+                // Get total jobs for each co-occurring skill
                 OPTIONAL MATCH (s2)<-[:REQUIRES]-(all_j:Job)
-                WITH s2, frequency, count(DISTINCT all_j) AS total_jobs_for_s2
+                WITH s2, 
+                    co_occurrence_frequency,
+                    avg_importance,
+                    avg_level,
+                    COUNT(DISTINCT all_j) AS total_jobs_for_s2
+                
+                // Calculate co-occurrence rate (percentage)
+                WITH s2, 
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    CASE 
+                        WHEN total_jobs_for_s2 > 0 
+                        THEN toFloat(co_occurrence_frequency) / toFloat(total_jobs_for_s2) * 100
+                        ELSE 0 
+                    END AS co_occurrence_rate
+                
                 RETURN s2.name AS name,
-                       s2.classification AS classification,
-                       frequency,
-                       CASE 
-                           WHEN total_jobs_for_s2 > 0 
-                           THEN toFloat(frequency) / toFloat(total_jobs_for_s2) 
-                           ELSE 0 
-                       END AS co_occurrence_rate
-                ORDER BY frequency DESC
+                    s2.classification AS classification,
+                    co_occurrence_frequency,
+                    total_jobs_for_s2 AS usage_count,
+                    co_occurrence_rate,
+                    avg_importance,
+                    avg_level
+                ORDER BY co_occurrence_rate DESC, co_occurrence_frequency DESC
                 LIMIT $limit
                 """,
                 skill_name=skill_name,
@@ -269,19 +329,65 @@ class SkillRepo:
                 skill_id = re.sub(r'[^a-zA-Z0-9]', '_', name.lower())
                 skill_id = re.sub(r'_+', '_', skill_id).strip('_')
                 
+                # Scale importance (0-5) to percentage (0-100)
+                avg_importance = record.get("avg_importance")
+                if avg_importance is not None:
+                    try:
+                        avg_importance = round(float(avg_importance) * 20, 1)
+                    except:
+                        avg_importance = 0
+                else:
+                    avg_importance = 0
+                
+                # Scale level (0-7) to percentage (0-100)
+                avg_level = record.get("avg_level")
+                if avg_level is not None:
+                    try:
+                        avg_level = round(float(avg_level) * 14.3, 1)
+                    except:
+                        avg_level = 0
+                else:
+                    avg_level = 0
+                
+                # Get hot_technology and in_demand flags if they exist
+                hot_technology = False
+                in_demand = False
+                if skill_type == "tech":
+                    # You might want to fetch these from the relationship properties
+                    hot_technology = False
+                    in_demand = False
+                
                 skills.append({
                     "id": skill_id,
                     "name": name,
                     "type": skill_type,
-                    "frequency": record["frequency"],
-                    "co_occurrence_rate": round(record.get("co_occurrence_rate", 0) * 100, 1)
+                    "frequency": record["co_occurrence_frequency"],
+                    "usage_count": record.get("usage_count", 0),
+                    "co_occurrence_rate": round(record.get("co_occurrence_rate", 0), 1),
+                    "avg_importance": avg_importance,
+                    "avg_level": avg_level,
+                    "hot_technology": hot_technology,
+                    "in_demand": in_demand,
+                    "demand_trend": 0,
+                    "salary_association": 0
                 })
             
-            return skills
+            # Remove any remaining duplicates just in case (by name)
+            unique_skills = []
+            seen_names = set()
+            for skill in skills:
+                if skill["name"] not in seen_names:
+                    seen_names.add(skill["name"])
+                    unique_skills.append(skill)
+            
+            print(f"Returning {len(unique_skills)} unique skills with all fields")
+            return unique_skills[:limit]
     
-    # -------------------------
-    # Get Top Jobs Requiring Skill
-    # -------------------------
+        # -------------------------
+        # Get Top Jobs Requiring Skill
+        # -------------------------
+        # In get_top_jobs_for_skill method, fix the ORDER BY clause:
+
     async def get_top_jobs_for_skill(
         self,
         skill_name: str,
@@ -299,14 +405,14 @@ class SkillRepo:
                 MATCH (j:Job)-[r:REQUIRES]->(s:Skill {name: $skill_name})
                 WHERE r.importance IS NOT NULL
                 RETURN j.SOC AS soc_code,
-                       j.title AS title,
-                       r.importance AS importance,
-                       r.level AS level,
-                       r.Hot_Technology AS hot_technology,
-                       r.In_Demand AS in_demand
-                ORDER BY r.importance DESC NULLS LAST, 
-                         r.level DESC NULLS LAST,
-                         j.title
+                    j.title AS title,
+                    r.importance AS importance,
+                    r.level AS level,
+                    r.Hot_Technology AS hot_technology,
+                    r.In_Demand AS in_demand
+                ORDER BY r.importance DESC, 
+                        r.level DESC,
+                        j.title
                 LIMIT $limit
                 """,
                 skill_name=skill_name,
@@ -343,6 +449,65 @@ class SkillRepo:
             return jobs
     
     # -------------------------
+    # Get Network Graph Data
+    # -------------------------
+    async def get_skill_network_graph(
+        self,
+        skill_name: str,
+        limit: int = 10
+    ) -> Dict[str, List]:
+        """
+        Get data formatted for undirected network graph visualization.
+        Returns nodes and links for the top co-occurring skills.
+        """
+        if not skill_name:
+            return {"nodes": [], "links": []}
+        
+        # Get co-occurring skills
+        co_occurring = await self.get_co_occurring_skills(skill_name, limit)
+        
+        # Create nodes array
+        nodes = []
+        
+        # Add the main skill node
+        main_skill_id = re.sub(r'[^a-zA-Z0-9]', '_', skill_name.lower())
+        main_skill_id = re.sub(r'_+', '_', main_skill_id).strip('_')
+        
+        nodes.append({
+            "id": main_skill_id,
+            "name": skill_name,
+            "group": "1",
+            "value": 30,
+            "usage_count": None
+        })
+        
+        # Add co-occurring skill nodes
+        for i, skill in enumerate(co_occurring):
+            nodes.append({
+                "id": skill["id"],
+                "name": skill["name"],
+                "group": "2",
+                "value": 25 - (i * 1.5),
+                "usage_count": skill.get("usage_count", 0),
+                "co_occurrence_rate": skill.get("co_occurrence_rate", 0)
+            })
+        
+        # Create undirected links
+        links = []
+        for skill in co_occurring:
+            links.append({
+                "source": main_skill_id,
+                "target": skill["id"],
+                "value": skill.get("co_occurrence_rate", 50) / 10,
+                "co_occurrence_rate": skill.get("co_occurrence_rate", 0)
+            })
+        
+        return {
+            "nodes": nodes,
+            "links": links
+        }
+    
+    # -------------------------
     # Get Complete Skill Detail
     # -------------------------
     async def get_complete_skill_detail(self, skill_name: str) -> Optional[Dict[str, Any]]:
@@ -370,15 +535,17 @@ class SkillRepo:
             # Fetch all data in parallel
             metrics_task = self.get_skill_metrics(skill_name)
             usage_task = self.get_skill_usage(skill_name)
-            co_occurring_task = self.get_co_occurring_skills(skill_name, 6)
+            tech_flags_task = self.get_tech_skill_flags(skill_name)
+            co_occurring_task = self.get_co_occurring_skills(skill_name, 10)
+            network_graph_task = self.get_skill_network_graph(skill_name, 10)
             top_jobs_task = self.get_top_jobs_for_skill(skill_name, 6)
             
-            metrics, usage, co_occurring, top_jobs = await asyncio.gather(
-                metrics_task, usage_task, co_occurring_task, top_jobs_task,
+            metrics, usage, tech_flags, co_occurring, network_graph, top_jobs = await asyncio.gather(
+                metrics_task, usage_task, tech_flags_task, co_occurring_task, network_graph_task, top_jobs_task,
                 return_exceptions=True
             )
             
-            # Handle any exceptions in metrics
+            # Handle any exceptions
             if isinstance(metrics, Exception):
                 print(f"Error getting metrics: {metrics}")
                 metrics = {
@@ -398,54 +565,74 @@ class SkillRepo:
                     "jobs_not_requiring": 0
                 }
             
+            if isinstance(tech_flags, Exception):
+                print(f"Error getting tech flags: {tech_flags}")
+                tech_flags = {"hot_technology": False, "in_demand": False}
+            
             if isinstance(co_occurring, Exception):
                 print(f"Error getting co-occurring: {co_occurring}")
                 co_occurring = []
+            
+            if isinstance(network_graph, Exception):
+                print(f"Error getting network graph: {network_graph}")
+                network_graph = {"nodes": [], "links": []}
             
             if isinstance(top_jobs, Exception):
                 print(f"Error getting top jobs: {top_jobs}")
                 top_jobs = []
             
-            # Calculate demand trend
-            demand_trend = round(metrics.get("importance_percentile", 50) - 45, 1)
+            # Format metrics for UI - CONDITIONAL BASED ON SKILL TYPE
+            ui_metrics = []
             
-            # Calculate salary association
-            salary_association = 85000 + (metrics.get("avg_importance", 0) * 500)
+            # Base metrics all skills have
+            ui_metrics.append({
+                "title": "Skill Type",
+                "value": skill_type.replace("_", " ").title(),
+                "color": "cyan"
+            })
             
-            # Format metrics for UI
-            ui_metrics = [
-                {
-                    "title": "Skill Type",
-                    "value": skill_type.replace("_", " ").title(),
-                    "color": "cyan"
-                },
-                {
-                    "title": "Importance Level",
-                    "value": metrics.get("avg_importance", 0),
-                    "suffix": "/100",
-                    "color": "purple"
-                },
-                {
-                    "title": "Required Proficiency",
-                    "value": metrics.get("avg_level", 0),
-                    "suffix": "/100",
-                    "color": "coral"
-                },
-                {
-                    "title": "Demand Trend",
-                    "value": f"{demand_trend:+.1f}%",
-                    "trend": {"value": abs(demand_trend), "direction": "up" if demand_trend >= 0 else "down"},
-                    "color": "green"
-                },
-                {
-                    "title": "Salary Association",
-                    "value": salary_association,
-                    "prefix": "$",
-                    "trend": {"value": 5.2, "direction": "up"},
-                    "color": "amber",
-                    "format": "fmtK"
-                }
-            ]
+            # For Technology Skills - show Hot Technology and In Demand
+            if skill_type == "tech":
+                ui_metrics.extend([
+                    {
+                        "title": "Hot Technology",
+                        "value": "Yes" if tech_flags.get("hot_technology") else "No",
+                        "color": "coral" if tech_flags.get("hot_technology") else "amber"
+                    },
+                    {
+                        "title": "In Demand",
+                        "value": "Yes" if tech_flags.get("in_demand") else "No",
+                        "color": "green" if tech_flags.get("in_demand") else "amber"
+                    }
+                ])
+            # For Tools - remove importance and proficiency, just show basic info
+            elif skill_type == "tool":
+                # Tools only get skill type, no other KPIs
+                pass
+            # For all other skills - show importance and proficiency
+            else:
+                ui_metrics.extend([
+                    {
+                        "title": "Importance Level",
+                        "value": metrics.get("avg_importance", 0),
+                        "suffix": "/100",
+                        "color": "purple"
+                    },
+                    {
+                        "title": "Required Proficiency",
+                        "value": metrics.get("avg_level", 0),
+                        "suffix": "/100",
+                        "color": "coral"
+                    }
+                ])
+            
+            # Add jobs requiring metric for all skills
+            ui_metrics.append({
+                "title": "Jobs Requiring",
+                "value": usage.get("jobs_requiring", 0),
+                "format": "fmtK",
+                "color": "green"
+            })
             
             # Format usage data for donut chart
             usage_percentage = usage.get("percentage", 0)
@@ -453,11 +640,6 @@ class SkillRepo:
                 {"name": "Jobs Requiring", "value": usage_percentage, "color": "hsl(186 100% 50%)"},
                 {"name": "Jobs Not Requiring", "value": 100 - usage_percentage, "color": "hsl(0 0% 25%)"}
             ]
-            
-            # Add demand trend and salary association to co-occurring skills
-            for skill in co_occurring:
-                skill["demand_trend"] = round((skill.get("co_occurrence_rate", 0) - 50) / 10, 1)
-                skill["salary_association"] = 75000 + (skill.get("frequency", 0) * 100)
             
             # Generate skill ID
             skill_id = re.sub(r'[^a-zA-Z0-9]', '_', skill_name.lower())
@@ -475,12 +657,13 @@ class SkillRepo:
                 "usage_data": usage_data,
                 "usage_percentage": usage_percentage,
                 "co_occurring_skills": co_occurring,
+                "network_graph": network_graph,
                 "top_jobs": top_jobs,
                 "total_jobs_count": usage.get("total_jobs", 0)
             }
             
         except Exception as e:
-            print(f"❌ Error in get_complete_skill_detail: {e}")
+            print(f"Error in get_complete_skill_detail: {e}")
             import traceback
             traceback.print_exc()
             return None
