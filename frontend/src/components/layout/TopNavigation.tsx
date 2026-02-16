@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { useYear } from './YearContext';
 
 const navItems = [
   { name: 'Home', path: '/' },
@@ -19,11 +20,9 @@ const navItems = [
   { name: 'Trends', path: '/trends' },
 ];
 
-const years = [2024, 2023, 2022, 2021, 2020, 2019];
-
 export function TopNavigation() {
   const location = useLocation();
-  const [selectedYear, setSelectedYear] = useState(2024);
+  const { year: selectedYear, setYear: setSelectedYear, years } = useYear();
   const [searchQuery, setSearchQuery] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 

@@ -2,20 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ChevronLeft } from "lucide-react";
 
-import { DashboardLayout } from "@/components/layout";
+import { DashboardLayout, useYear } from "@/components/layout";
 import { MetricsGrid, SectionHeader } from "@/components/dashboard";
 import { HorizontalBarChart, MultiLineChart } from "@/components/charts";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 import { IndustriesAPI, JobDetail } from "@/lib/industries";
 
-const DEFAULT_YEAR = 2024;
-
 const IndustryDetail = () => {
   const { id } = useParams<{ id: string }>();
   const naics = id ? decodeURIComponent(id) : "";
 
-  const [year, setYear] = useState(DEFAULT_YEAR);
+  const { year } = useYear();
 
   const [naicsTitle, setNaicsTitle] = useState("");
   const [metrics, setMetrics] = useState<any[]>([]);

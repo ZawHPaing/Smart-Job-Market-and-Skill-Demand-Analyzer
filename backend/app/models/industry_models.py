@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import List, Optional
+from typing import Any, Dict, List
 from pydantic import BaseModel
 
 
@@ -154,9 +155,9 @@ class IndustryTopOccRow(BaseModel):
     occ2_emp: float = 0.0
     occ3_emp: float = 0.0
 
-class IndustryCompositionTopOccResponse(BaseModel):
+class IndustryTopOccCompositionResponse(BaseModel):
     year: int
     industries_limit: int
     top_n_occ: int
-    legend: List[IndustryTopOccLegendItem]
-    rows: List[IndustryTopOccRow]
+    rows: List[Dict[str, Any]]   # ✅ allow any keys (occ*_emp, occ*_title)
+    legend: List[Dict[str, Any]]

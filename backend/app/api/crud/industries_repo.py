@@ -248,6 +248,47 @@ class IndustryRepo:
         Uses each industry's All Occupations row (occ_code=00-0000)
         If o_group exists, prefers o_group=total.
         """
+        # Cross-industry totals drive overall employment + median salary.
+        cross_pipeline = [
+            {
+                "$match": {
+                    "year": int(year),
+                    "occ_code": "00-0000",
+                    "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "total_emp": {
+                        "$max": {
+                            "$convert": {
+                                "input": "$tot_emp",
+                                "to": "double",
+                                "onError": 0,
+                                "onNull": 0,
+                            }
+                        }
+                    },
+                    "median_salary": {
+                        "$max": {
+                            "$convert": {
+                                "input": "$a_median",
+                                "to": "double",
+                                "onError": 0,
+                                "onNull": 0,
+                            }
+                        }
+                    },
+                }
+            },
+            {"$project": {"_id": 0, "total_emp": 1, "median_salary": 1}},
+        ]
+        cross_rows = await self.db["bls_oews"].aggregate(cross_pipeline).to_list(length=1)
+        cross_doc = cross_rows[0] if cross_rows else {}
+        cross_total_employment = _to_float(cross_doc.get("total_emp"))
+        cross_median_salary = _to_float(cross_doc.get("median_salary"))
+
         cursor = self.db["bls_oews"].find(
             {"year": int(year), "occ_code": "00-0000"},
             {"naics": 1, "naics_title": 1, "tot_emp": 1, "a_median": 1, "o_group": 1, "_id": 0},
@@ -264,6 +305,9 @@ class IndustryRepo:
 
             naics = str(doc.get("naics", "")).strip()
             title = str(doc.get("naics_title", "")).strip()
+            title_lc = title.lower()
+            if naics == "000000" or "cross-industry" in title_lc:
+                continue
             if not naics:
                 continue
 
@@ -272,8 +316,10 @@ class IndustryRepo:
             med_sal_by_naics[naics] = _to_float(doc.get("a_median"))
 
         total_industries = len(emp_by_naics)
-        total_employment = float(sum(emp_by_naics.values()))
-        median_industry_salary = _median([v for v in med_sal_by_naics.values() if v > 0])
+        total_employment = cross_total_employment
+        median_industry_salary = cross_median_salary if cross_median_salary > 0 else _median(
+            [v for v in med_sal_by_naics.values() if v > 0]
+        )
 
         # growth vs previous year
         avg_growth = 0.0
@@ -294,10 +340,13 @@ class IndustryRepo:
                     continue
 
                 naics = str(doc.get("naics", "")).strip()
+                title = str(doc.get("naics_title", "")).strip()
+                if naics == "000000" or "cross-industry" in title.lower():
+                    continue
                 if not naics:
                     continue
                 prev_emp[naics] = _to_float(doc.get("tot_emp"))
-                prev_title[naics] = str(doc.get("naics_title", "")).strip()
+                prev_title[naics] = title
 
             growths: List[float] = []
             best = float("-inf")
@@ -344,6 +393,7 @@ class IndustryRepo:
         q: Dict[str, Any] = {"year": int(year), "occ_code": "00-0000"}
         if exclude_cross_industry:
             q["naics"] = {"$ne": "000000"}
+            q["naics_title"] = {"$not": {"$regex": "Cross-industry", "$options": "i"}}
 
         proj = {"_id": 0, "naics": 1, "naics_title": 1, "tot_emp": 1, "a_median": 1}
         cursor = self.db["bls_oews"].find(q, proj)
@@ -361,7 +411,23 @@ class IndustryRepo:
 
         key = "total_employment" if by == "employment" else "median_salary"
         rows.sort(key=lambda r: r.get(key, 0.0), reverse=True)
-        return rows[: max(1, int(limit))]
+
+        # De-dupe by industry title (case-insensitive) after sorting, then limit.
+        seen_titles: set[str] = set()
+        unique: List[Dict[str, Any]] = []
+        for r in rows:
+            title = str(r.get("naics_title", "")).strip()
+            if not title:
+                continue
+            tkey = title.lower()
+            if tkey in seen_titles:
+                continue
+            seen_titles.add(tkey)
+            unique.append(r)
+            if len(unique) >= max(1, int(limit)):
+                break
+
+        return unique
 
     async def top_industries_with_growth(self, year: int, limit: int = 6) -> List[Dict[str, Any]]:
         top = await self.top_industries(year=year, limit=limit, by="employment")
@@ -484,59 +550,81 @@ class IndustryRepo:
     # ✅ FIXED: top occupations composition (NO mongo sorting on string tot_emp)
     # -------------------------
     async def top_occupations_composition(
-        self,
-        year: int,
-        industries_limit: int = 6,
-        top_n_occ: int = 3,
-    ) -> Dict[str, Any]:
-        """
-        For top N industries (by total employment), return stacked-bar rows of top N occupations
-        (by employment) inside each industry.
+    self,
+    year: int,
+    industries_limit: int = 6,
+    top_n_occ: int = 3,
+) -> Dict[str, Any]:
+     """
+    For top N industries (by total employment), return stacked-bar rows of top N occupations
+    (by employment) inside each industry.
 
-        IMPORTANT:
-          - We MUST sort in Python because tot_emp is often stored as string with commas in Mongo.
-        """
-        top_inds = await self.top_industries(year=year, limit=industries_limit, by="employment")
-        naics_list = [t["naics"] for t in top_inds if t.get("naics")]
-        title_map = {t["naics"]: t["naics_title"] for t in top_inds}
+    Adds:
+      - occ{i}_title for each top occupation i
+    """
+     top_inds = await self.top_industries(year=year, limit=industries_limit, by="employment")
+     naics_list = [t["naics"] for t in top_inds if t.get("naics")]
+     title_map = {t["naics"]: t.get("naics_title", t["naics"]) for t in top_inds}
 
-        if not naics_list:
-            return {"year": int(year), "industries_limit": industries_limit, "top_n_occ": top_n_occ, "rows": [], "legend": []}
-
-        # For each industry, fetch occupations and pick top N by parsed employment.
-        per_naics_top: Dict[str, List[Dict[str, Any]]] = {}
-
-        for naics in naics_list:
-            cur = self.db["bls_oews"].find(
-                {"year": int(year), "naics": naics, "occ_code": {"$ne": "00-0000"}},
-                {"_id": 0, "occ_title": 1, "tot_emp": 1},
-            )
-
-            occs: List[Dict[str, Any]] = []
-            async for d in cur:
-                emp = _to_float(d.get("tot_emp"))
-                if emp <= 0:
-                    continue
-                occs.append({"occ_title": str(d.get("occ_title", "")).strip(), "emp": emp})
-
-            occs.sort(key=lambda x: x["emp"], reverse=True)
-            per_naics_top[naics] = occs[: max(1, int(top_n_occ))]
-
-        # legend: “Top Occupation #1/#2/#3” (stable across industries)
-        legend = [{"key": f"occ{i}_emp", "name": f"Top Occupation #{i}"} for i in range(1, int(top_n_occ) + 1)]
-
-        rows: List[Dict[str, Any]] = []
-        for naics in naics_list:
-            occs = per_naics_top.get(naics, [])
-            row: Dict[str, Any] = {"industry": title_map.get(naics, naics)}
-            for i in range(1, int(top_n_occ) + 1):
-                row[f"occ{i}_emp"] = round(float(occs[i - 1]["emp"]), 2) if (i - 1) < len(occs) else 0.0
-            rows.append(row)
-
+     if not naics_list:
         return {
             "year": int(year),
             "industries_limit": int(industries_limit),
             "top_n_occ": int(top_n_occ),
-            "rows": rows,
-            "legend": legend,
+            "rows": [],
+            "legend": [],
         }
+
+    # For each industry, fetch occupations and pick top N by parsed employment.
+     per_naics_top: Dict[str, List[Dict[str, Any]]] = {}
+
+     for naics in naics_list:
+        cur = self.db["bls_oews"].find(
+            {"year": int(year), "naics": naics, "occ_code": {"$ne": "00-0000"}},
+            {"_id": 0, "occ_title": 1, "tot_emp": 1},
+        )
+
+        occs: List[Dict[str, Any]] = []
+        async for d in cur:
+            emp = _to_float(d.get("tot_emp"))
+            if emp <= 0:
+                continue
+            occs.append(
+                {
+                    "occ_title": str(d.get("occ_title", "")).strip(),
+                    "emp": emp,
+                }
+            )
+
+        occs.sort(key=lambda x: x["emp"], reverse=True)
+        per_naics_top[naics] = occs[: max(1, int(top_n_occ))]
+
+    # legend: “Top Occupation #1/#2/#3” (stable across industries)
+     legend = [{"key": f"occ{i}_emp", "name": f"Top Occupation #{i}"} for i in range(1, int(top_n_occ) + 1)]
+
+     rows: List[Dict[str, Any]] = []
+     for naics in naics_list:
+        occs = per_naics_top.get(naics, [])
+        row: Dict[str, Any] = {
+            "industry": title_map.get(naics, naics),
+            "industry_naics": naics,  # optional, handy for debugging/frontend
+        }
+
+        for i in range(1, int(top_n_occ) + 1):
+            idx = i - 1
+            if idx < len(occs):
+                row[f"occ{i}_emp"] = round(float(occs[idx]["emp"]), 2)
+                row[f"occ{i}_title"] = occs[idx]["occ_title"]
+            else:
+                row[f"occ{i}_emp"] = 0.0
+                row[f"occ{i}_title"] = ""
+
+        rows.append(row)
+
+     return {
+        "year": int(year),
+        "industries_limit": int(industries_limit),
+        "top_n_occ": int(top_n_occ),
+        "rows": rows,
+        "legend": legend,
+    }

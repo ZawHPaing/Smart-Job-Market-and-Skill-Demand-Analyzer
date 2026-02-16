@@ -76,7 +76,7 @@ async def dashboard_metrics(
 @router.get("/top", response_model=IndustryTopResponse)
 async def top_industries(
     year: int = Query(...),
-    limit: int = Query(6, ge=1, le=50),
+    limit: int = Query(6, ge=1, le=1000),
     by: str = Query("employment", pattern="^(employment|salary)$"),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryTopResponse:

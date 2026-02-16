@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
-} from 'recharts';
+} from "recharts";
 
 interface MultiLineChartProps {
   data: Record<string, any>[];
@@ -19,6 +19,9 @@ interface MultiLineChartProps {
   xAxisKey: string;
   height?: number;
   formatYAxis?: (value: number) => string;
+
+  // ✅ optional override, default 6
+  maxLines?: number;
 }
 
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -28,17 +31,14 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         <p className="text-sm font-medium mb-2">{label}</p>
         {payload.map((entry: any, index: number) => (
           <p key={index} className="text-sm flex items-center gap-2">
-            <span
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: entry.color }}
-            />
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
             <span className="text-muted-foreground">{entry.name}: </span>
             <span className="font-medium" style={{ color: entry.color }}>
-              {typeof entry.value === 'number'
-                ? entry.value >= 1000000
-                  ? `${(entry.value / 1000000).toFixed(1)}M`
-                  : entry.value >= 1000
-                  ? `${(entry.value / 1000).toFixed(0)}K`
+              {typeof entry.value === "number"
+                ? entry.value >= 1_000_000
+                  ? `${(entry.value / 1_000_000).toFixed(1)}M`
+                  : entry.value >= 1_000
+                  ? `${(entry.value / 1_000).toFixed(0)}K`
                   : entry.value.toLocaleString()
                 : entry.value}
             </span>
@@ -55,22 +55,52 @@ export function MultiLineChart({
   lines,
   xAxisKey,
   height = 300,
-  formatYAxis = (v) => (v >= 1000000 ? `${v / 1000000}M` : v >= 1000 ? `${v / 1000}K` : v.toString()),
+  formatYAxis = (v) =>
+    v >= 1_000_000 ? `${v / 1_000_000}M` : v >= 1_000 ? `${v / 1_000}K` : v.toString(),
+  maxLines = 6,
 }: MultiLineChartProps) {
+  // ✅ Deduplicate & hard-limit to maxLines
+  const limitedLines = (() => {
+    const seen = new Set<string>();
+    const out: typeof lines = [];
+
+    for (const l of lines || []) {
+      const key = (l.key || "").trim();
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(l);
+      if (out.length >= maxLines) break;
+    }
+    return out;
+  })();
+
+  // ✅ Optionally, remove extra keys from data (prevents stale keys showing in tooltip/legend)
+  const limitedData = (data || []).map((row) => {
+    const cleaned: Record<string, any> = { ...row };
+    for (const k of Object.keys(cleaned)) {
+      if (k === xAxisKey) continue;
+      if (!limitedLines.some((l) => l.key === k)) {
+        delete cleaned[k];
+      }
+    }
+    return cleaned;
+  });
+
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RechartsLineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+      <RechartsLineChart data={limitedData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 20%)" />
         <XAxis
           dataKey={xAxisKey}
-          tick={{ fill: 'hsl(0 0% 65%)', fontSize: 12 }}
-          axisLine={{ stroke: 'hsl(0 0% 20%)' }}
-          tickLine={{ stroke: 'hsl(0 0% 20%)' }}
+          tick={{ fill: "hsl(0 0% 65%)", fontSize: 12 }}
+          axisLine={{ stroke: "hsl(0 0% 20%)" }}
+          tickLine={{ stroke: "hsl(0 0% 20%)" }}
         />
         <YAxis
-          tick={{ fill: 'hsl(0 0% 65%)', fontSize: 12 }}
-          axisLine={{ stroke: 'hsl(0 0% 20%)' }}
-          tickLine={{ stroke: 'hsl(0 0% 20%)' }}
+          tick={{ fill: "hsl(0 0% 65%)", fontSize: 12 }}
+          axisLine={{ stroke: "hsl(0 0% 20%)" }}
+          tickLine={{ stroke: "hsl(0 0% 20%)" }}
           tickFormatter={formatYAxis}
         />
         <Tooltip content={<CustomTooltip />} />
@@ -78,11 +108,10 @@ export function MultiLineChart({
           verticalAlign="bottom"
           iconType="circle"
           iconSize={8}
-          formatter={(value) => (
-            <span className="text-sm text-muted-foreground">{value}</span>
-          )}
+          formatter={(value) => <span className="text-sm text-muted-foreground">{value}</span>}
         />
-        {lines.map((line) => (
+
+        {limitedLines.map((line) => (
           <Line
             key={line.key}
             type="monotone"
@@ -91,7 +120,7 @@ export function MultiLineChart({
             stroke={line.color}
             strokeWidth={2}
             dot={{ fill: line.color, strokeWidth: 0, r: 4 }}
-            activeDot={{ r: 6, stroke: line.color, strokeWidth: 2, fill: 'hsl(0 0% 10%)' }}
+            activeDot={{ r: 6, stroke: line.color, strokeWidth: 2, fill: "hsl(0 0% 10%)" }}
             animationDuration={1500}
           />
         ))}
