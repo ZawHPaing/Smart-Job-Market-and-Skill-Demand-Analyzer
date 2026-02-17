@@ -23,6 +23,7 @@ from app.models.salary_models import (
     TopCrossIndustryJobsResponse,
     JobEmploymentTimeSeriesResponse,
 )
+from app.services.cache import cache
 
 router = APIRouter(prefix="/salary-employment", tags=["Salary & Employment"])
 
@@ -60,6 +61,11 @@ async def get_metrics(
     year: Optional[int] = Query(None, description="If omitted, uses latest year"),
     db: AgnosticDatabase = Depends(get_db),
 ) -> MetricsResponse:
+    cache_key = f"salary_metrics_{year}"
+    cached = cache.get(cache_key)
+    if cached:
+        return MetricsResponse(**cached)
+    
     repo = SalaryRepo(db)
     y = year or await repo.latest_year()
     data = await repo.dashboard_metrics(y)
@@ -103,7 +109,10 @@ async def get_metrics(
             color="amber",
         ),
     ]
-    return MetricsResponse(year=y, metrics=metrics)
+    
+    response = MetricsResponse(year=y, metrics=metrics)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/industries/bar", response_model=IndustryBarResponse)
@@ -113,10 +122,18 @@ async def industries_bar(
     limit: int = Query(15, ge=1, le=50),
     db: AgnosticDatabase = Depends(get_db),
 ) -> IndustryBarResponse:
+    cache_key = f"salary_industries_bar_{year}_{search}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return IndustryBarResponse(**cached)
+    
     repo = SalaryRepo(db)
     y = year or await repo.latest_year()
     items = await repo.industry_bar(y, search, limit)
-    return IndustryBarResponse(year=y, items=[BarPoint(**it) for it in items])
+    
+    response = IndustryBarResponse(year=y, items=[BarPoint(**it) for it in items])
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/industries", response_model=PagedIndustries)
@@ -129,10 +146,18 @@ async def industries_table(
     sort_dir: int = Query(-1, description="-1 desc, 1 asc"),
     db: AgnosticDatabase = Depends(get_db),
 ) -> PagedIndustries:
+    cache_key = f"salary_industries_table_{year}_{search}_{page}_{page_size}_{sort_by}_{sort_dir}"
+    cached = cache.get(cache_key)
+    if cached:
+        return PagedIndustries(**cached)
+    
     repo = SalaryRepo(db)
     y = year or await repo.latest_year()
     total, items = await repo.industries_paged(y, search, page, page_size, sort_by, sort_dir)
-    return PagedIndustries(year=y, page=page, page_size=page_size, total=total, items=items)
+    
+    response = PagedIndustries(year=y, page=page, page_size=page_size, total=total, items=items)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/jobs", response_model=PagedJobs)
@@ -145,10 +170,18 @@ async def jobs_table(
     sort_dir: int = Query(-1, description="-1 desc, 1 asc"),
     db: AgnosticDatabase = Depends(get_db),
 ) -> PagedJobs:
+    cache_key = f"salary_jobs_table_{year}_{search}_{page}_{page_size}_{sort_by}_{sort_dir}"
+    cached = cache.get(cache_key)
+    if cached:
+        return PagedJobs(**cached)
+    
     repo = SalaryRepo(db)
     y = year or await repo.latest_year()
     total, items = await repo.jobs_paged(y, search, page, page_size, sort_by, sort_dir)
-    return PagedJobs(year=y, page=page, page_size=page_size, total=total, items=items)
+    
+    response = PagedJobs(year=y, page=page, page_size=page_size, total=total, items=items)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/jobs/top-cross-industry", response_model=TopCrossIndustryJobsResponse)
@@ -157,10 +190,18 @@ async def top_cross_industry_jobs(
     limit: int = Query(10, ge=1, le=50),
     db: AgnosticDatabase = Depends(get_db),
 ) -> TopCrossIndustryJobsResponse:
+    cache_key = f"salary_top_cross_jobs_{year}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return TopCrossIndustryJobsResponse(**cached)
+    
     repo = SalaryRepo(db)
     y = year or await repo.latest_year()
     items = await repo.top_cross_industry_jobs(y, limit)
-    return TopCrossIndustryJobsResponse(year=y, items=[BarPoint(**it) for it in items])
+    
+    response = TopCrossIndustryJobsResponse(year=y, items=[BarPoint(**it) for it in items])
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/industries/salary-timeseries", response_model=IndustrySalaryTimeSeriesResponse)
@@ -170,6 +211,13 @@ async def industry_salary_timeseries(
     end_year: Optional[int] = Query(None),
     db: AgnosticDatabase = Depends(get_db),
 ) -> IndustrySalaryTimeSeriesResponse:
+    # Sort names for consistent cache key
+    sorted_names = sorted(names) if names else []
+    cache_key = f"salary_timeseries_{sorted_names}_{start_year}_{end_year}"
+    cached = cache.get(cache_key)
+    if cached:
+        return IndustrySalaryTimeSeriesResponse(**cached)
+    
     repo = SalaryRepo(db)
     names = _normalize_names(names)
     rows = await repo.industry_salary_timeseries(names, start_year, end_year)
@@ -185,7 +233,9 @@ async def industry_salary_timeseries(
     for name, pts in grouped.items():
         series.append(MultiLineSeries(key=_make_key(name), name=name, points=pts))
 
-    return IndustrySalaryTimeSeriesResponse(series=series)
+    response = IndustrySalaryTimeSeriesResponse(series=series)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/jobs/employment-timeseries", response_model=JobEmploymentTimeSeriesResponse)
@@ -196,6 +246,11 @@ async def job_employment_timeseries(
     end_year: Optional[int] = Query(None),
     db: AgnosticDatabase = Depends(get_db),
 ) -> JobEmploymentTimeSeriesResponse:
+    cache_key = f"salary_job_timeseries_{year}_{limit}_{start_year}_{end_year}"
+    cached = cache.get(cache_key)
+    if cached:
+        return JobEmploymentTimeSeriesResponse(**cached)
+    
     repo = SalaryRepo(db)
     y = year or await repo.latest_year()
     rows = await repo.job_employment_timeseries(y, limit, start_year, end_year)
@@ -224,4 +279,6 @@ async def job_employment_timeseries(
             )
         )
 
-    return JobEmploymentTimeSeriesResponse(series=series)
+    response = JobEmploymentTimeSeriesResponse(series=series)
+    cache.set(cache_key, response.dict())
+    return response

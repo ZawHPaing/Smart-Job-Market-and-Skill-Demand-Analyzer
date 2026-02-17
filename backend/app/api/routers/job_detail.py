@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from app.api.dependencies import get_db
 from app.api.crud.job_detail_repo import JobDetailRepo
 from app.models.job_detail_models import JobDetailResponse
+from app.services.cache import cache
 
 if TYPE_CHECKING:
     from motor.core import AgnosticDatabase
@@ -20,10 +21,16 @@ async def get_job_detail(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobDetailResponse:
     """Get complete job details from O*NET collections"""
-    repo = JobDetailRepo(db)
-    
     # URL decode if needed
     occ_code = occ_code.strip()
+    
+    # Check cache
+    cache_key = f"job_detail_{occ_code}"
+    cached = cache.get(cache_key)
+    if cached:
+        return JobDetailResponse(**cached)
+    
+    repo = JobDetailRepo(db)
     
     data = await repo.get_complete_job_detail(occ_code)
     
@@ -33,7 +40,9 @@ async def get_job_detail(
             detail=f"Job not found for occ_code={occ_code}"
         )
     
-    return JobDetailResponse(**data)
+    response = JobDetailResponse(**data)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/{occ_code}/skills", response_model=List[Dict[str, Any]])
@@ -43,6 +52,11 @@ async def get_job_skills(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> List[Dict[str, Any]]:
     """Get skills for a specific job"""
+    cache_key = f"job_skills_{occ_code}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = JobDetailRepo(db)
     onet_soc = await repo.get_onet_soc(occ_code)
     
@@ -50,7 +64,10 @@ async def get_job_skills(
         return []
     
     skills = await repo.get_skills(onet_soc)
-    return skills[:limit]
+    result = skills[:limit]
+    
+    cache.set(cache_key, result)
+    return result
 
 
 @router.get("/{occ_code}/technology-skills", response_model=List[Dict[str, Any]])
@@ -59,13 +76,20 @@ async def get_job_technology_skills(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> List[Dict[str, Any]]:
     """Get technology skills for a specific job"""
+    cache_key = f"job_tech_skills_{occ_code}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = JobDetailRepo(db)
     onet_soc = await repo.get_onet_soc(occ_code)
     
     if not onet_soc:
         return []
     
-    return await repo.get_technology_skills(onet_soc)
+    result = await repo.get_technology_skills(onet_soc)
+    cache.set(cache_key, result)
+    return result
 
 
 @router.get("/{occ_code}/abilities", response_model=List[Dict[str, Any]])
@@ -75,6 +99,11 @@ async def get_job_abilities(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> List[Dict[str, Any]]:
     """Get abilities for a specific job"""
+    cache_key = f"job_abilities_{occ_code}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = JobDetailRepo(db)
     onet_soc = await repo.get_onet_soc(occ_code)
     
@@ -82,7 +111,10 @@ async def get_job_abilities(
         return []
     
     abilities = await repo.get_abilities(onet_soc)
-    return abilities[:limit]
+    result = abilities[:limit]
+    
+    cache.set(cache_key, result)
+    return result
 
 
 @router.get("/{occ_code}/knowledge", response_model=List[Dict[str, Any]])
@@ -92,6 +124,11 @@ async def get_job_knowledge(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> List[Dict[str, Any]]:
     """Get knowledge areas for a specific job"""
+    cache_key = f"job_knowledge_{occ_code}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = JobDetailRepo(db)
     onet_soc = await repo.get_onet_soc(occ_code)
     
@@ -99,4 +136,7 @@ async def get_job_knowledge(
         return []
     
     knowledge = await repo.get_knowledge(onet_soc)
-    return knowledge[:limit]
+    result = knowledge[:limit]
+    
+    cache.set(cache_key, result)
+    return result

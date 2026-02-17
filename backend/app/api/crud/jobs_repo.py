@@ -472,7 +472,7 @@ class JobsRepo:
         only_with_details: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        Get salary trends for top jobs over time - single aggregation
+        Get salary trends for top jobs over time - returns raw salary values
         """
         # First, get top jobs at the end year
         top_jobs_end = await self.top_jobs(
@@ -489,6 +489,9 @@ class JobsRepo:
         occ_codes = [job["occ_code"] for job in top_jobs_end]
         years = list(range(min(year_from, year_to), max(year_from, year_to) + 1))
         
+        # Create lookup map for job titles
+        title_map = {job["occ_code"]: job["occ_title"] for job in top_jobs_end}
+        
         # Single aggregation for all occupations
         pipeline = [
             {
@@ -503,24 +506,26 @@ class JobsRepo:
                         "occ_code": "$occ_code",
                         "year": "$year"
                     },
-                    "max_emp": {"$max": "$tot_emp"},
-                    "all_salaries": {"$push": "$a_median"}
+                    "salary": {"$max": "$a_median"},  # Take max salary for the year
+                    "occ_title": {"$first": "$occ_title"}
                 }
             },
             {
                 "$group": {
                     "_id": "$_id.occ_code",
-                    "salary_data": {
+                    "occ_title": {"$first": "$occ_title"},
+                    "points": {
                         "$push": {
                             "year": "$_id.year",
-                            "salary": {"$arrayElemAt": ["$all_salaries", 0]}  # Salary from the max emp document
+                            "salary": "$salary"
                         }
                     }
                 }
             },
             {
                 "$project": {
-                    "salary_data": {
+                    "occ_title": 1,
+                    "points": {
                         "$map": {
                             "input": years,
                             "as": "y",
@@ -529,17 +534,23 @@ class JobsRepo:
                                     "vars": {
                                         "match": {
                                             "$filter": {
-                                                "input": "$salary_data",
-                                                "as": "s",
-                                                "cond": {"$eq": ["$$s.year", "$$y"]}
+                                                "input": "$points",
+                                                "as": "p",
+                                                "cond": {"$eq": ["$$p.year", "$$y"]}
                                             }
                                         }
                                     },
                                     "in": {
                                         "$cond": {
                                             "if": {"$gt": [{"$size": "$$match"}, 0]},
-                                            "then": {"$arrayElemAt": ["$$match", 0]},
-                                            "else": {"year": "$$y", "salary": 0}
+                                            "then": {
+                                                "year": "$$y",
+                                                "salary": {"$arrayElemAt": ["$$match.salary", 0]}
+                                            },
+                                            "else": {
+                                                "year": "$$y",
+                                                "salary": 0
+                                            }
                                         }
                                     }
                                 }
@@ -550,16 +561,30 @@ class JobsRepo:
             }
         ]
         
-        # Create lookup map for job titles
-        title_map = {job["occ_code"]: job["occ_title"] for job in top_jobs_end}
-        
         series = []
         async for doc in self.db["bls_oews"].aggregate(pipeline):
             code = doc["_id"]
+            
+            # Sort points by year and carry forward last valid salary
+            points = sorted(doc["points"], key=lambda x: x["year"])
+            
+            # Carry forward last valid salary for missing years
+            last_valid = 0
+            cleaned_points = []
+            for point in points:
+                if point["salary"] > 0:
+                    last_valid = point["salary"]
+                    cleaned_points.append(point)
+                else:
+                    cleaned_points.append({
+                        "year": point["year"],
+                        "salary": last_valid  # Use last valid salary instead of 0
+                    })
+            
             series.append({
                 "occ_code": code,
-                "occ_title": title_map.get(code, ""),
-                "points": sorted(doc["salary_data"], key=lambda x: x["year"])
+                "occ_title": title_map.get(code, doc.get("occ_title", "")),
+                "points": cleaned_points
             })
         
         return series

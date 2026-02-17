@@ -88,6 +88,13 @@ export type JobTrendSeries = {
   points: JobTrendPoint[];
 };
 
+export type JobTopTrendsResponse = {
+  year_from: number;
+  year_to: number;
+  limit: number;
+  series: JobTrendSeries[];
+};
+
 export type JobSalaryTrendPoint = {
   year: number;
   salary: number;
@@ -99,11 +106,11 @@ export type JobSalaryTrendSeries = {
   points: JobSalaryTrendPoint[];
 };
 
-export type JobTopTrendsResponse = {
+export type JobTopSalaryTrendsResponse = {
   year_from: number;
   year_to: number;
   limit: number;
-  series: JobTrendSeries[];
+  series: JobSalaryTrendSeries[];
 };
 
 export type JobTopCombinedResponse = {
@@ -197,7 +204,7 @@ export const JobsAPI = {
 
   // Top jobs salary trends over time
   topSalaryTrends: (year_from = 2011, year_to = 2024, limit = 10, group?: string, sort_by: "employment" | "salary" = "employment") =>
-    apiGet<JobTopTrendsResponse>("/jobs/top-salary-trends", { year_from, year_to, limit, group, sort_by }),
+    apiGet<JobTopSalaryTrendsResponse>("/jobs/top-salary-trends", { year_from, year_to, limit, group, sort_by }),
 
   // Combined top jobs data with both trends
   topCombined: (year: number, limit = 10, by: "employment" | "salary" = "employment", group?: string) =>

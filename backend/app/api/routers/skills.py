@@ -9,6 +9,7 @@ from app.database.neo4j import get_neo4j_driver
 from app.api.crud.skill_repo import SkillRepo
 from app.models.skill_models import SkillDetailResponse
 from app.api.crud.job_detail_repo import JobDetailRepo
+from app.services.cache import cache
 
 if TYPE_CHECKING:
     from motor.core import AgnosticDatabase
@@ -23,7 +24,7 @@ async def search_skills(
     limit: int = Query(10, ge=1, le=50),
     neo4j_driver: AsyncDriver = Depends(get_neo4j_driver),
 ) -> List[dict]:
-    """Search for skills by name"""
+    """Search for skills by name - don't cache search results"""
     repo = SkillRepo(neo4j_driver)
     
     async with neo4j_driver.session() as session:
@@ -60,6 +61,12 @@ async def get_skill_detail(
     mongodb: "AgnosticDatabase" = Depends(get_db),
 ) -> SkillDetailResponse:
     """Get complete skill details from Neo4j"""
+    # Check cache
+    cache_key = f"skill_detail_{skill_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return SkillDetailResponse(**cached)
+    
     repo = SkillRepo(neo4j_driver)
     job_detail_repo = JobDetailRepo(mongodb)
     
@@ -128,7 +135,9 @@ async def get_skill_detail(
     
     skill_detail["top_jobs"] = enhanced_jobs
     
-    return SkillDetailResponse(**skill_detail)
+    response = SkillDetailResponse(**skill_detail)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/{skill_id}/jobs")
@@ -139,6 +148,11 @@ async def get_skill_jobs(
     mongodb: "AgnosticDatabase" = Depends(get_db),
 ) -> List[dict]:
     """Get top jobs for a specific skill"""
+    cache_key = f"skill_jobs_{skill_id}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = SkillRepo(neo4j_driver)
     job_detail_repo = JobDetailRepo(mongodb)
     
@@ -157,6 +171,7 @@ async def get_skill_jobs(
                 job["employment"] = bls_data.get("tot_emp")
         enhanced_jobs.append(job)
     
+    cache.set(cache_key, enhanced_jobs)
     return enhanced_jobs
 
 
@@ -167,10 +182,17 @@ async def get_co_occurring_skills(
     neo4j_driver: AsyncDriver = Depends(get_neo4j_driver),
 ) -> List[dict]:
     """Get co-occurring skills for a specific skill"""
+    cache_key = f"skill_cooccurring_{skill_id}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = SkillRepo(neo4j_driver)
     skill_name = skill_id.replace("_", " ").replace("-", " ").title()
     
     skills = await repo.get_co_occurring_skills(skill_name, limit)
+    
+    cache.set(cache_key, skills)
     return skills
 
 
@@ -180,8 +202,15 @@ async def get_skill_metrics(
     neo4j_driver: AsyncDriver = Depends(get_neo4j_driver),
 ) -> dict:
     """Get metrics for a specific skill"""
+    cache_key = f"skill_metrics_{skill_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
     repo = SkillRepo(neo4j_driver)
     skill_name = skill_id.replace("_", " ").replace("-", " ").title()
     
     metrics = await repo.get_skill_metrics(skill_name)
+    
+    cache.set(cache_key, metrics)
     return metrics

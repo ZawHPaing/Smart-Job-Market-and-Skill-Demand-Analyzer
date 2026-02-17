@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import List, Optional, Any
 from pydantic import BaseModel
 
 
@@ -72,7 +72,7 @@ class JobCard(BaseModel):
 
 class JobTopResponse(BaseModel):
     year: int
-    by: Literal["employment", "salary"]
+    by: str
     limit: int
     group: Optional[str] = None
     jobs: List[JobCard]
@@ -89,6 +89,13 @@ class JobTrendSeries(BaseModel):
     points: List[JobTrendPoint]
 
 
+class JobTopTrendsResponse(BaseModel):
+    year_from: int
+    year_to: int
+    limit: int
+    series: List[JobTrendSeries]
+
+
 class JobSalaryTrendPoint(BaseModel):
     year: int
     salary: float
@@ -100,16 +107,16 @@ class JobSalaryTrendSeries(BaseModel):
     points: List[JobSalaryTrendPoint]
 
 
-class JobTopTrendsResponse(BaseModel):
+class JobTopSalaryTrendsResponse(BaseModel):
     year_from: int
     year_to: int
     limit: int
-    series: List[JobTrendSeries]
+    series: List[JobSalaryTrendSeries]
 
 
 class JobTopCombinedResponse(BaseModel):
     year: int
-    by: Literal["employment", "salary"]
+    by: str
     limit: int
     group: Optional[str] = None
     top_jobs: List[JobCard]

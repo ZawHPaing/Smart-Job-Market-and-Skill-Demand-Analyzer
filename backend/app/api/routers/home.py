@@ -17,6 +17,7 @@ from app.models.home_models import (
     TrendSeries,
     TrendPoint,
 )
+from app.services.cache import cache
 
 if TYPE_CHECKING:
     from motor.core import AgnosticDatabase
@@ -29,6 +30,12 @@ async def home_overview(
     year: Optional[int] = Query(None),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> HomeOverviewResponse:
+    # Check cache
+    cache_key = f"home_overview_{year}"
+    cached = cache.get(cache_key)
+    if cached:
+        return HomeOverviewResponse(**cached)
+    
     repo = HomeRepo(db)
     y, data = await repo.overview(year)
 
@@ -60,7 +67,9 @@ async def home_overview(
         ),
     ]
 
-    return HomeOverviewResponse(year=y, metrics=metrics)
+    response = HomeOverviewResponse(year=y, metrics=metrics)
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/industry-distribution", response_model=IndustryDistributionResponse)
@@ -69,13 +78,22 @@ async def industry_distribution(
     limit: int = Query(8, ge=1, le=50),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryDistributionResponse:
+    cache_key = f"home_industry_dist_{year}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return IndustryDistributionResponse(**cached)
+    
     repo = HomeRepo(db)
     items = await repo.industry_distribution(year=year, limit=limit)
-    return IndustryDistributionResponse(
+    
+    response = IndustryDistributionResponse(
         year=year,
         limit=limit,
         items=[IndustryDistributionItem(**x) for x in items],
     )
+    
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/top-jobs", response_model=TopJobsResponse)
@@ -84,13 +102,22 @@ async def top_jobs(
     limit: int = Query(8, ge=1, le=50),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> TopJobsResponse:
+    cache_key = f"home_top_jobs_{year}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return TopJobsResponse(**cached)
+    
     repo = HomeRepo(db)
     items = await repo.top_jobs(year=year, limit=limit)
-    return TopJobsResponse(
+    
+    response = TopJobsResponse(
         year=year,
         limit=limit,
         items=[TopJobItem(**x) for x in items],
     )
+    
+    cache.set(cache_key, response.dict())
+    return response
 
 
 @router.get("/employment-trends", response_model=EmploymentTrendsResponse)
@@ -100,10 +127,15 @@ async def employment_trends(
     limit: int = Query(3, ge=1, le=10),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> EmploymentTrendsResponse:
+    cache_key = f"home_employment_trends_{year_from}_{year_to}_{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        return EmploymentTrendsResponse(**cached)
+    
     repo = HomeRepo(db)
     series = await repo.employment_trends(year_from=year_from, year_to=year_to, limit=limit)
 
-    return EmploymentTrendsResponse(
+    response = EmploymentTrendsResponse(
         year_from=min(year_from, year_to),
         year_to=max(year_from, year_to),
         limit=limit,
@@ -116,11 +148,6 @@ async def employment_trends(
             for s in series
         ],
     )
-
-@router.get("/overview", response_model=HomeOverviewResponse)
-async def home_overview(
-    year: int = Query(...),
-    db: AgnosticDatabase = Depends(get_db),
-):
-    repo = HomeRepo(db)
-    return await repo.overview(year)
+    
+    cache.set(cache_key, response.dict())
+    return response

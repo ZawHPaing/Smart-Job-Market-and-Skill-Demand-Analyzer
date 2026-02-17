@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, ArrowUpDown } from 'lucide-react';
 
@@ -21,9 +21,6 @@ import type {
   JobCard,
   JobDashboardMetrics,
   JobItem,
-  JobTrendSeries,
-  JobSalaryTrendSeries,
-  JobTopCombinedResponse
 } from '@/lib/jobs';
 
 // ---------- helpers ----------
@@ -59,8 +56,26 @@ const CHART_COLORS = [
 
 type SortBy = 'employment' | 'salary';
 
+// Debounce hook for search
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+}
+
 const Jobs = () => {
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const debouncedSearch = useDebounce(searchInput, 300);
   const [currentPage, setCurrentPage] = useState(1);
   const [year] = useState(2024);
   const [sortBy, setSortBy] = useState<SortBy>('employment');
@@ -71,66 +86,152 @@ const Jobs = () => {
 
   const [metrics, setMetrics] = useState<JobDashboardMetrics | null>(null);
   const [allJobs, setAllJobs] = useState<JobItem[]>([]);
-  const [combinedData, setCombinedData] = useState<JobTopCombinedResponse | null>(null);
+  const [topJobs, setTopJobs] = useState<JobCard[]>([]);
+  const [employmentTrendData, setEmploymentTrendData] = useState<any[]>([]);
+  const [salaryTrendData, setSalaryTrendData] = useState<any[]>([]);
+  const [chartLines, setChartLines] = useState<{ key: string; name: string; color: string; }[]>([]);
+  
+  // Cache for API responses
+  const apiCache = useRef<Map<string, any>>(new Map());
 
-  // Load all data when sortBy changes
-  useEffect(() => {
-    let cancelled = false;
+useEffect(() => {
+  let cancelled = false;
 
-    async function load() {
-      setLoading(true);
-      setError(null);
+  async function load() {
+    setLoading(true);
+    setError(null);
 
-      try {
-        console.log('Fetching jobs data...');
-        
-        // Load all data in parallel
-        const [m, jobsList, combined] = await Promise.all([
-          JobsAPI.dashboardMetrics(year),
-          JobsAPI.list({ year, limit: 1000 }),
-          JobsAPI.topCombined(year, 10, sortBy),
-        ]);
+    try {
+      console.log('Fetching jobs data for sortBy:', sortBy);
+      
+      const cacheKey = `jobs-${year}-${sortBy}`;
+      
+      // Check cache first
+      if (apiCache.current.has(cacheKey)) {
+        console.log('Using cached data for', cacheKey);
+        const cached = apiCache.current.get(cacheKey);
+        if (!cancelled) {
+          setMetrics(cached.metrics);
+          setTopJobs(cached.topJobs);
+          setEmploymentTrendData(cached.employmentTrendData);
+          setSalaryTrendData(cached.salaryTrendData);
+          setChartLines(cached.chartLines);
+          setAllJobs(cached.allJobs);
+          setLoading(false);
+        }
+        return;
+      }
+      
+      // Load data in parallel
+      const [m, topJobsData, employmentTrends, salaryTrends, jobsList] = await Promise.all([
+        JobsAPI.dashboardMetrics(year),
+        JobsAPI.top(year, 10, sortBy),
+        JobsAPI.topTrends(2011, year, 10, undefined, sortBy),
+        JobsAPI.topSalaryTrends(2011, year, 10, undefined, sortBy),
+        JobsAPI.list({ year, limit: 1000 }),
+      ]);
 
-        if (cancelled) return;
+      if (cancelled) return;
 
-        console.log('Dashboard metrics:', m);
-        console.log('Jobs list sample:', jobsList.jobs.slice(0, 3));
-        console.log('Combined data:', combined);
+      console.log('Data loaded for sortBy:', sortBy);
+      console.log('Top jobs:', topJobsData);
+      console.log('Employment trends:', employmentTrends);
+      console.log('Salary trends:', salaryTrends);
 
-        setMetrics(m);
-        
-        // Sort all jobs by the current sort criteria
-        const sortedJobs = [...jobsList.jobs].sort((a, b) => {
-          if (sortBy === 'employment') {
-            return b.total_employment - a.total_employment;
-          } else {
-            const aSalary = a.a_median || 0;
-            const bSalary = b.a_median || 0;
-            return bSalary - aSalary;
-          }
+      setMetrics(m);
+      setTopJobs(topJobsData.jobs);
+
+      // Generate chart lines from top jobs
+      const lines = topJobsData.jobs.slice(0, 10).map((job, index) => ({
+        key: job.occ_code,
+        name: job.occ_title.length > 20 
+          ? job.occ_title.substring(0, 20) + '...' 
+          : job.occ_title,
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      }));
+      setChartLines(lines);
+
+      // Process employment trends
+      let employmentRows: any[] = [];
+      if (employmentTrends?.series?.length) {
+        const years = new Set<number>();
+        employmentTrends.series.forEach((s: any) => {
+          s.points.forEach((p: any) => years.add(p.year));
         });
         
-        setAllJobs(sortedJobs);
-        setCombinedData(combined);
-      } catch (e: any) {
-        if (cancelled) return;
-        setError(e?.message || 'Failed to load jobs data');
-        console.error('Jobs loading error:', e);
-      } finally {
-        if (cancelled) return;
-        setLoading(false);
+        const sortedYears = Array.from(years).sort((a, b) => a - b);
+        employmentRows = sortedYears.map(year => {
+          const row: any = { year };
+          employmentTrends.series.forEach((series: any) => {
+            const point = series.points.find((p: any) => p.year === year);
+            row[series.occ_code] = point ? point.employment : 0;
+          });
+          return row;
+        });
+        setEmploymentTrendData(employmentRows);
       }
+
+      // Process salary trends
+      let salaryRows: any[] = [];
+      if (salaryTrends?.series?.length) {
+        const years = new Set<number>();
+        salaryTrends.series.forEach((s: any) => {
+          s.points.forEach((p: any) => years.add(p.year));
+        });
+        
+        const sortedYears = Array.from(years).sort((a, b) => a - b);
+        salaryRows = sortedYears.map(year => {
+          const row: any = { year };
+          salaryTrends.series.forEach((series: any) => {
+            const point = series.points.find((p: any) => p.year === year);
+            row[series.occ_code] = point ? point.salary : 0;
+          });
+          return row;
+        });
+        setSalaryTrendData(salaryRows);
+      }
+
+      // Sort all jobs by the current sort criteria
+      const sortedJobs = [...jobsList.jobs].sort((a, b) => {
+        if (sortBy === 'employment') {
+          return b.total_employment - a.total_employment;
+        } else {
+          const aSalary = a.a_median || 0;
+          const bSalary = b.a_median || 0;
+          return bSalary - aSalary;
+        }
+      });
+      setAllJobs(sortedJobs);
+      
+      // Cache the results with properly defined variables
+      apiCache.current.set(cacheKey, {
+        metrics: m,
+        topJobs: topJobsData.jobs,
+        employmentTrendData: employmentRows,
+        salaryTrendData: salaryRows,
+        chartLines: lines,
+        allJobs: sortedJobs
+      });
+
+    } catch (e: any) {
+      if (cancelled) return;
+      setError(e?.message || 'Failed to load jobs data');
+      console.error('Jobs loading error:', e);
+    } finally {
+      if (cancelled) return;
+      setLoading(false);
     }
+  }
 
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [year, sortBy]);
+  load();
+  return () => {
+    cancelled = true;
+  };
+}, [year, sortBy]);
 
-  // Filter jobs based on search
+  // Filter jobs based on debounced search - memoized
   const filteredJobs = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     if (!q) return allJobs.slice(0, 30);
     
     return allJobs
@@ -139,21 +240,21 @@ const Jobs = () => {
         job.occ_code.includes(q)
       )
       .slice(0, 30);
-  }, [allJobs, searchQuery]);
+  }, [allJobs, debouncedSearch]);
 
-  // Format top jobs for horizontal bar chart
+  // Format top jobs for horizontal bar chart - memoized
   const chartData = useMemo(() => {
-    if (!combinedData) return [];
-    return combinedData.top_jobs.map((job) => ({
+    if (!topJobs.length) return [];
+    return topJobs.map((job) => ({
       name: job.occ_title.length > 25 
         ? job.occ_title.substring(0, 25) + '...' 
         : job.occ_title,
       value: job.total_employment,
       secondaryValue: job.a_median || 0,
     }));
-  }, [combinedData]);
+  }, [topJobs]);
 
-  // Format metrics
+  // Format metrics - memoized
   const dashboardMetrics = useMemo(() => {
     if (!metrics) return [];
     
@@ -161,7 +262,7 @@ const Jobs = () => {
       {
         title: 'Total Employment',
         value: metrics.total_employment,
-        trend: { value: metrics.avg_job_growth_pct, direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
+        trend: { value: Math.abs(metrics.avg_job_growth_pct), direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
         color: 'cyan' as const,
         format: fmtM,
       },
@@ -179,7 +280,7 @@ const Jobs = () => {
       },
       {
         title: 'Mean Salary',
-        value: metrics.a_median * 1.15,
+        value: Math.round(metrics.a_median * 1.15),
         prefix: '$',
         trend: { value: 3.2, direction: 'up' as const },
         color: 'coral' as const,
@@ -196,61 +297,18 @@ const Jobs = () => {
     ];
   }, [metrics]);
 
-  // Prepare employment trend data
-  const employmentTrendData = useMemo(() => {
-    if (!combinedData?.employment_trends?.length) return [];
-    
-    const years = new Set<number>();
-    combinedData.employment_trends.forEach(series => {
-      series.points.forEach(point => years.add(point.year));
-    });
-    
-    const sortedYears = Array.from(years).sort((a, b) => a - b);
-    
-    return sortedYears.map(year => {
-      const row: any = { year };
-      combinedData.employment_trends.forEach((series) => {
-        const point = series.points.find(p => p.year === year);
-        row[series.occ_code] = point ? point.employment : 0;
-      });
-      return row;
-    });
-  }, [combinedData]);
+  // Handle load more
+  const handleLoadMore = useCallback(() => {
+    setCurrentPage(p => p + 1);
+  }, []);
 
-  // Prepare salary trend data
-  const salaryTrendData = useMemo(() => {
-    if (!combinedData?.salary_trends?.length) return [];
-    
-    const years = new Set<number>();
-    combinedData.salary_trends.forEach(series => {
-      series.points.forEach(point => years.add(point.year));
-    });
-    
-    const sortedYears = Array.from(years).sort((a, b) => a - b);
-    
-    return sortedYears.map(year => {
-      const row: any = { year };
-      combinedData.salary_trends.forEach((series) => {
-        const point = series.points.find(p => p.year === year);
-        row[series.occ_code] = point ? point.salary : 0;
-      });
-      return row;
-    });
-  }, [combinedData]);
+  // Handle sort change
+  const handleSortChange = useCallback((newSort: SortBy) => {
+    setSortBy(newSort);
+    setCurrentPage(1);
+  }, []);
 
-  // Generate line configurations for charts
-  const chartLines = useMemo(() => {
-    if (!combinedData?.top_jobs) return [];
-    
-    return combinedData.top_jobs.slice(0, 10).map((job, index) => ({
-      key: job.occ_code,
-      name: job.occ_title.length > 20 
-        ? job.occ_title.substring(0, 20) + '...' 
-        : job.occ_title,
-      color: CHART_COLORS[index % CHART_COLORS.length],
-    }));
-  }, [combinedData]);
-
+  // Show loading state
   if (loading) {
     return (
       <DashboardLayout>
@@ -261,6 +319,7 @@ const Jobs = () => {
     );
   }
 
+  // Show error state
   if (error) {
     return (
       <DashboardLayout>
@@ -295,8 +354,8 @@ const Jobs = () => {
               type="search"
               placeholder="Search jobs..."
               className="pl-10 bg-secondary/50"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
         </div>
@@ -321,10 +380,10 @@ const Jobs = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setSortBy('employment')}>
+                  <DropdownMenuItem onClick={() => handleSortChange('employment')}>
                     Job Postings
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSortBy('salary')}>
+                  <DropdownMenuItem onClick={() => handleSortChange('salary')}>
                     Median Salary
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -351,7 +410,7 @@ const Jobs = () => {
             <CardHeader>
               <SectionHeader
                 title="Job Trends Over Time"
-                subtitle={`Top ${combinedData?.top_jobs.length || 0} jobs by ${sortBy === 'employment' ? 'job postings' : 'median salary'} (2011-2024)`}
+                subtitle={`Top ${topJobs.length} jobs by ${sortBy === 'employment' ? 'job postings' : 'median salary'} (2011-${year})`}
               />
             </CardHeader>
             <CardContent>
@@ -368,6 +427,7 @@ const Jobs = () => {
                       xAxisKey="year"
                       lines={chartLines}
                       height={300}
+                      maxLines={10}
                     />
                   ) : (
                     <div className="text-muted-foreground text-center py-8">
@@ -383,6 +443,7 @@ const Jobs = () => {
                       xAxisKey="year"
                       lines={chartLines}
                       height={300}
+                      maxLines={10}
                     />
                   ) : (
                     <div className="text-muted-foreground text-center py-8">
@@ -400,17 +461,8 @@ const Jobs = () => {
           <CardHeader className="flex flex-row items-center justify-between">
             <SectionHeader
               title="All Job Titles"
-              subtitle={`Sorted by ${sortBy === 'employment' ? 'job postings (descending)' : 'median salary (descending)'}`}
+              subtitle={`Showing ${filteredJobs.length} of ${allJobs.length} jobs`}
             />
-            {allJobs.length > 30 && (
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => setCurrentPage(p => p + 1)}
-              >
-                Load More
-              </Button>
-            )}
           </CardHeader>
           <CardContent>
             {filteredJobs.length > 0 ? (
@@ -444,8 +496,8 @@ const Jobs = () => {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                {searchQuery ? (
-                  <>No jobs found matching "{searchQuery}"</>
+                {searchInput ? (
+                  <>No jobs found matching "{searchInput}"</>
                 ) : (
                   <>No jobs data available</>
                 )}
@@ -456,7 +508,7 @@ const Jobs = () => {
               <div className="mt-6 text-center">
                 <Button 
                   variant="outline" 
-                  onClick={() => setCurrentPage(p => p + 1)}
+                  onClick={handleLoadMore}
                 >
                   Load More Jobs
                 </Button>
