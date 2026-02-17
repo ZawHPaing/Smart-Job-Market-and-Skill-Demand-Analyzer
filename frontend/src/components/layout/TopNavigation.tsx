@@ -1,6 +1,7 @@
+// frontend/src/components/layout/TopNavigation.tsx
 import { Link, useLocation } from 'react-router-dom';
-import { Search, ChevronDown, Menu } from 'lucide-react';
-import { useState } from 'react';
+import { Search, ChevronDown, Menu, X, Loader2 } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -11,6 +12,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { useYear } from './YearContext';
+import { useSearch } from '@/hooks/useSearch';
+import { SearchResults } from '@/components/search/SearchResults';
 
 const navItems = [
   { name: 'Home', path: '/' },
@@ -23,8 +26,41 @@ const navItems = [
 export function TopNavigation() {
   const location = useLocation();
   const { year: selectedYear, setYear: setSelectedYear, years } = useYear();
-  const [searchQuery, setSearchQuery] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  
+  const {
+    query,
+    setQuery,
+    results,
+    loading,
+    isOpen,
+    setIsOpen,
+    handleSelect,
+    clearSearch
+  } = useSearch();
+
+  // Close search results when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [setIsOpen]);
+
+  // Close mobile menu on navigation
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  // Handle search result selection
+  const onSelectResult = (result: any) => {
+    handleSelect(result);
+    setIsOpen(false);
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -63,15 +99,45 @@ export function TopNavigation() {
         {/* Search & Year Selector */}
         <div className="flex items-center gap-3">
           {/* Search */}
-          <div className="relative hidden w-64 md:block">
+          <div ref={searchRef} className="relative hidden w-80 md:block">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
               placeholder="Search jobs, industries, skills..."
-              className="pl-10 bg-secondary/50 border-border/50 focus:bg-secondary"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10 pr-8 bg-secondary/50 border-border/50 focus:bg-secondary"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => {
+                if (results.length > 0) {
+                  setIsOpen(true);
+                }
+              }}
             />
+            {query && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : (
+                  <button
+                    onClick={clearSearch}
+                    className="text-muted-foreground hover:text-foreground"
+                    type="button"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )}
+            
+            {/* Search Results Dropdown */}
+            {isOpen && (
+              <SearchResults
+                results={results}
+                loading={loading}
+                onSelect={onSelectResult}
+                className="w-full"
+              />
+            )}
           </div>
 
           {/* Year Selector */}
@@ -137,12 +203,44 @@ export function TopNavigation() {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
-                placeholder="Search..."
-                className="pl-10 bg-secondary/50"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search jobs, industries, skills..."
+                className="pl-10 pr-8 bg-secondary/50"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onFocus={() => {
+                  if (results.length > 0) {
+                    setIsOpen(true);
+                  }
+                }}
               />
+              {query && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <button
+                      onClick={clearSearch}
+                      className="text-muted-foreground hover:text-foreground"
+                      type="button"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
+            
+            {/* Mobile Search Results */}
+            {isOpen && (
+              <div className="mt-2">
+                <SearchResults
+                  results={results}
+                  loading={loading}
+                  onSelect={onSelectResult}
+                  className="static shadow-none border"
+                />
+              </div>
+            )}
           </nav>
         </div>
       )}

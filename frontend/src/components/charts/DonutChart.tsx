@@ -15,6 +15,10 @@ interface DonutChartProps {
   data: DonutItem[];
   height?: number;
   topListCount?: number; // how many labels to show under chart
+  context?: 'industry' | 'skill' | 'default'; // Add context to determine what text to show
+  showSubtitle?: boolean; // Control subtitle visibility
+  showHoverText?: boolean; // Control hover instruction text visibility
+  showCenterTotal?: boolean; // Control center total text visibility
 }
 
 const COLORS = [
@@ -42,14 +46,27 @@ function fmtPct(n: number) {
   return `${(n * 100).toFixed(n < 0.1 ? 1 : 0)}%`;
 }
 
-const DonutTooltip = ({ active, payload }: any) => {
+const DonutTooltip = ({ active, payload, context = 'default' }: any) => {
   if (!active || !payload?.length) return null;
   const p = payload[0];
+  
+  // Different tooltip content based on context
+  const getValueLabel = () => {
+    switch(context) {
+      case 'skill':
+        return 'Jobs:';
+      case 'industry':
+        return 'Employment:';
+      default:
+        return 'Value:';
+    }
+  };
+
   return (
     <div className="glass-card px-3 py-2">
       <p className="text-sm font-medium mb-1">{p.name}</p>
       <p className="text-sm text-muted-foreground">
-        Employment: <span className="font-medium text-foreground">{Number(p.value).toLocaleString()}</span>
+        {getValueLabel()} <span className="font-medium text-foreground">{Number(p.value).toLocaleString()}</span>
       </p>
       <p className="text-sm text-muted-foreground">
         Share: <span className="font-medium text-foreground">{fmtPct(p.payload?.__pct ?? 0)}</span>
@@ -61,7 +78,11 @@ const DonutTooltip = ({ active, payload }: any) => {
 export function DonutChart({
   data,
   height = 260,
-  topListCount = 10, // Changed default to 10
+  topListCount = 10,
+  context = 'default',
+  showSubtitle = true,
+  showHoverText = true,
+  showCenterTotal = true,
 }: DonutChartProps) {
   const total = data.reduce((a, b) => a + (b.value || 0), 0) || 1;
 
@@ -81,13 +102,37 @@ export function DonutChart({
   const leftColumn = topList.slice(0, midPoint);
   const rightColumn = topList.slice(midPoint);
 
+  // Get the appropriate subtitle text based on context
+  const getSubtitleText = () => {
+    switch(context) {
+      case 'skill':
+        return `Showing top ${topList.length} categories by job count`;
+      case 'industry':
+        return `Showing top ${topList.length} industries by employment`;
+      default:
+        return `Showing top ${topList.length} items by value`;
+    }
+  };
+
+  // Get the appropriate hover text based on context
+  const getHoverText = () => {
+    switch(context) {
+      case 'skill':
+        return "Hover slices to see exact job counts.";
+      case 'industry':
+        return "Hover slices to see full industry name and exact employment.";
+      default:
+        return "Hover slices to see details.";
+    }
+  };
+
   return (
     <div className="w-full">
       {/* Chart */}
       <div className="w-full" style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Tooltip content={<DonutTooltip />} />
+            <Tooltip content={<DonutTooltip context={context} />} />
             <Pie
               data={withPct}
               dataKey="value"
@@ -104,29 +149,33 @@ export function DonutChart({
               ))}
             </Pie>
 
-            {/* Center label */}
-            <text
-              x="50%"
-              y="48%"
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill="hsl(0 0% 92%)"
-              style={{ fontSize: 14, fontWeight: 700 }}
-            >
-              Total
-            </text>
-            <text
-              x="50%"
-              y="58%"
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill="hsl(0 0% 65%)"
-              style={{ fontSize: 12 }}
-            >
-              {total >= 1_000_000
-                ? `${(total / 1_000_000).toFixed(1)}M`
-                : total.toLocaleString()}
-            </text>
+            {/* Center label - conditionally shown */}
+            {showCenterTotal && (
+              <>
+                <text
+                  x="50%"
+                  y="48%"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="hsl(0 0% 92%)"
+                  style={{ fontSize: 14, fontWeight: 700 }}
+                >
+                  Total
+                </text>
+                <text
+                  x="50%"
+                  y="58%"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill="hsl(0 0% 65%)"
+                  style={{ fontSize: 12 }}
+                >
+                  {total >= 1_000_000
+                    ? `${(total / 1_000_000).toFixed(1)}M`
+                    : total.toLocaleString()}
+                </text>
+              </>
+            )}
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -189,17 +238,20 @@ export function DonutChart({
           </div>
         </div>
 
-        {/* If odd number of items, show total count */}
-        {topList.length > 0 && (
+        {/* Context-specific subtitle - conditionally shown */}
+        {showSubtitle && topList.length > 0 && (
           <p className="mt-3 text-xs text-muted-foreground text-center">
-            Showing top {topList.length} industries by employment
+            {getSubtitleText()}
           </p>
         )}
       </div>
 
-      <p className="mt-2 text-xs text-muted-foreground">
-        Hover slices to see full industry name and exact employment.
-      </p>
+      {/* Hover instruction text - conditionally shown */}
+      {showHoverText && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {getHoverText()}
+        </p>
+      )}
     </div>
   );
 }

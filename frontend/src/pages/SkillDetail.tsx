@@ -135,8 +135,8 @@ const SkillDetail = () => {
 
   // Prepare data for donut chart
   const usageData = skillDetail?.usage_data || [
-    { name: 'Jobs Requiring', value: 0, color: 'hsl(186 100% 50%)' },
-    { name: 'Jobs Not Requiring', value: 100, color: 'hsl(0 0% 25%)' }
+    { name: 'Jobs Requiring', value: 0 },
+    { name: 'Jobs Not Requiring', value: 100 }
   ];
 
   // Prepare network graph data
@@ -300,34 +300,37 @@ const SkillDetail = () => {
 
         {/* Skill Usage & Network */}
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Skill Usage Ring */}
-          <Card className="glass-card">
-            <CardHeader>
-              <SectionHeader
-                title="Skill Usage"
-                subtitle="Percentage of jobs requiring this skill"
-              />
-            </CardHeader>
-            <CardContent className="flex flex-col items-center">
-              <div className="relative">
-                <DonutChart
-                  data={usageData}
-                  innerRadius={80}
-                  outerRadius={110}
-                  showLabels={false}
-                />
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-4xl font-bold text-cyan">
-                    {skillDetail.usage_percentage || 0}%
-                  </span>
-                  <span className="text-sm text-muted-foreground">of jobs</span>
-                </div>
-              </div>
-              <p className="mt-4 text-center text-muted-foreground">
-                {skillDetail.usage_percentage || 0}% of analyzed job postings require {skillDetail.basic_info.skill_name}
-              </p>
-            </CardContent>
-          </Card>
+         {/* Skill Usage Ring */}
+<Card className="glass-card">
+  <CardHeader>
+    <SectionHeader
+      title="Skill Usage"
+      subtitle="Percentage of jobs requiring this skill"
+    />
+  </CardHeader>
+  <CardContent className="flex flex-col items-center">
+    <div className="relative w-full max-w-md mx-auto">
+      <DonutChart
+        data={usageData}
+        height={300}
+        topListCount={2}
+        context="skill"
+        showSubtitle={false}        // Turn off the subtitle
+        showHoverText={false}       // Turn off the hover text
+        showCenterTotal={false}     // Turn off the center total text
+      />
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <span className="text-4xl font-bold text-cyan">
+          {skillDetail.usage_percentage || 0}%
+        </span>
+        <span className="text-sm text-muted-foreground">of jobs</span>
+      </div>
+    </div>
+    <p className="mt-4 text-center text-muted-foreground">
+      {skillDetail.usage_percentage || 0}% of analyzed job postings require {skillDetail.basic_info.skill_name}
+    </p>
+  </CardContent>
+</Card>
 
           {/* Co-Occurring Skills Network */}
           <Card className="glass-card">
