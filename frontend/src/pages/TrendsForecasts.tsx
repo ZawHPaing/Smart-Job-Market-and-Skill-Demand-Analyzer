@@ -2,30 +2,45 @@ import { useEffect, useState, useMemo } from 'react';
 import { Calendar, TrendingUp, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
-import { StackedBarChart, MultiLineChart } from '@/components/charts';
+import { MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ForecastAPI } from '@/lib/forecast';
 import type { ForecastResponse } from '@/lib/forecast';
 
-// Helper functions
-const fmtK = (n: number) => `${Math.round(n / 1000)}K`;
-const fmtM = (n: number) => `${(n / 1_000_000).toFixed(1)}M`;
+// Helper functions - only used for chart formatting, not for metrics
+const fmtK = (n: number) => {
+  if (n >= 1000) {
+    return `${Math.round(n / 1000)}K`;
+  }
+  return n.toString();
+};
+
+const fmtM = (n: number) => {
+  if (n >= 1_000_000) {
+    return `${(n / 1_000_000).toFixed(1)}M`;
+  } else if (n >= 1000) {
+    return `${(n / 1000).toFixed(0)}K`;
+  }
+  return n.toString();
+};
 
 const FORECAST_YEARS = [2025, 2026, 2027, 2028];
 
-// Chart colors
-const CHART_COLORS = {
-  current: 'hsl(0 0% 40%)',
-  forecast: 'hsl(186 100% 50%)',
-  tech: 'hsl(186 100% 50%)',
-  healthcare: 'hsl(0 100% 71%)',
-  finance: 'hsl(258 90% 76%)',
-  line1: 'hsl(186 100% 50%)',
-  line2: 'hsl(0 100% 71%)',
-  line3: 'hsl(258 90% 76%)'
-};
+// Extended chart colors for 10 items
+const CHART_COLORS = [
+  'hsl(186 100% 50%)', // cyan
+  'hsl(0 100% 71%)',   // coral
+  'hsl(258 90% 76%)',  // purple
+  'hsl(142 76% 45%)',  // green
+  'hsl(38 92% 50%)',   // amber
+  'hsl(330 85% 60%)',  // pink
+  'hsl(215 90% 60%)',  // blue
+  'hsl(55 92% 55%)',   // yellow
+  'hsl(280 70% 65%)',  // lavender
+  'hsl(190 90% 55%)',  // teal
+];
 
 const TrendsForecasts = () => {
   const [forecastYear, setForecastYear] = useState(2025);
@@ -34,125 +49,110 @@ const TrendsForecasts = () => {
   const [forecastData, setForecastData] = useState<ForecastResponse | null>(null);
 
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
 
-  async function loadForecast() {
-    setLoading(true);
-    setError(null);
+    async function loadForecast() {
+      setLoading(true);
+      setError(null);
 
-    try {
-      console.log('🟡 Loading forecast for year:', forecastYear);
-      const data = await ForecastAPI.get(forecastYear);
-      if (cancelled) return;
-      
-      // 🔍 DEEP DEBUG: Log everything
-      console.log('🔍 FULL FORECAST DATA:', JSON.stringify(data, null, 2));
-      
-      // Log specific sections
-      console.log('🔍 industry_composition:', data.industry_composition);
-      console.log('🔍 employment_forecast:', data.employment_forecast);
-      console.log('🔍 top_jobs_forecast:', data.top_jobs_forecast);
-      console.log('🔍 industry_details:', data.industry_details);
-      
-      // Check if arrays exist and have items
-      console.log('🔍 industry_composition length:', data.industry_composition?.length);
-      console.log('🔍 employment_forecast length:', data.employment_forecast?.length);
-      console.log('🔍 top_jobs_forecast length:', data.top_jobs_forecast?.length);
-      
-      setForecastData(data);
-    } catch (e: any) {
-      if (cancelled) return;
-      setError(e?.message || 'Failed to load forecast data');
-      console.error('🔴 Forecast error:', e);
-    } finally {
-      if (cancelled) return;
-      setLoading(false);
+      try {
+        console.log('🟡 Loading forecast for year:', forecastYear);
+        const data = await ForecastAPI.get(forecastYear);
+        if (cancelled) return;
+        
+        setForecastData(data);
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message || 'Failed to load forecast data');
+        console.error('🔴 Forecast error:', e);
+      } finally {
+        if (cancelled) return;
+        setLoading(false);
+      }
     }
-  }
 
-  loadForecast();
-  return () => { cancelled = true; };
-}, [forecastYear]);
+    loadForecast();
+    return () => { cancelled = true; };
+  }, [forecastYear]);
 
-
-
-  // Transform metrics for MetricsGrid
+  // Transform metrics for MetricsGrid - PASS RAW NUMBERS
   const metrics = useMemo(() => {
     if (!forecastData?.metrics) return [];
     
-    return forecastData.metrics.map(m => ({
-      title: m.title,
-      value: typeof m.value === 'number' 
-        ? (m.title.includes('Total Employment') ? fmtM(m.value) : 
-           m.title.includes('Salary') ? fmtK(m.value) : 
-           m.value)
-        : m.value,
-      prefix: m.prefix,
-      suffix: m.suffix,
-      trend: m.trend ? {
-        value: Math.abs(m.trend.value),
-        direction: m.trend.direction as "up" | "down" | "neutral"
-      } : undefined,
-      color: m.color as "cyan" | "purple" | "green" | "coral" | "amber"
-    }));
+    return forecastData.metrics.map(m => {
+      // Pass raw values - let MetricCard handle formatting
+      return {
+        title: m.title,
+        value: m.value, // Raw number (e.g., 149164323)
+        prefix: m.prefix,
+        suffix: m.suffix,
+        trend: m.trend ? {
+          value: Math.abs(m.trend.value),
+          direction: m.trend.direction as "up" | "down" | "neutral"
+        } : undefined,
+        color: m.color as "cyan" | "purple" | "green" | "coral" | "amber"
+      };
+    });
   }, [forecastData]);
 
-  // Transform industry composition data for StackedBarChart
-  const industryChartData = useMemo(() => {
-    if (!forecastData?.industry_composition?.length) {
-      // Return mock data if no real data
-      return [
-        { industry: 'Technology', current: 4200000, forecast: 4750000 },
-        { industry: 'Healthcare', current: 5800000, forecast: 6350000 },
-        { industry: 'Finance', current: 2900000, forecast: 3120000 },
-        { industry: 'Retail', current: 2100000, forecast: 2420000 },
-        { industry: 'Manufacturing', current: 1450000, forecast: 1320000 },
-        { industry: 'Education', current: 1250000, forecast: 1400000 },
-      ];
-    }
-    
-    return forecastData.industry_composition.map(item => ({
-      industry: item.industry,
-      current: item.current || 0,
-      forecast: item.forecast || 0
-    }));
-  }, [forecastData]);
-
-  // Transform employment forecast data for MultiLineChart
+  // Transform employment forecast data for MultiLineChart - spanning full range
   const employmentChartData = useMemo(() => {
     if (!forecastData?.employment_forecast?.length) {
-      // Return mock data if no real data
-      return [
-        { year: 2022, tech: 3900000, healthcare: 5400000, finance: 2750000 },
-        { year: 2023, tech: 4050000, healthcare: 5600000, finance: 2850000 },
-        { year: 2024, tech: 4200000, healthcare: 5800000, finance: 2900000 },
-        { year: 2025, tech: 4450000, healthcare: 6050000, finance: 3000000 },
-        { year: 2026, tech: 4750000, healthcare: 6350000, finance: 3120000 },
-      ];
+      return [];
     }
     
-    // Get industry names from the data
-    const industries = forecastData.industry_composition.map(i => i.industry);
+    // Get top 10 industry names from industry_details
+    const industries = forecastData.industry_details
+      ?.slice(0, 10)
+      .map(i => i.industry) || [];
     
     return forecastData.employment_forecast.map(item => ({
       year: item.year,
-      [industries[0] || 'Technology']: item[industries[0]] || 0,
-      [industries[1] || 'Healthcare']: item[industries[1]] || 0,
-      [industries[2] || 'Finance']: item[industries[2]] || 0,
+      ...industries.reduce((acc, industry) => {
+        acc[industry] = item[industry] || 0;
+        return acc;
+      }, {} as Record<string, number>)
     }));
   }, [forecastData]);
 
-  // Get line colors based on industries
+  // Get top 10 industries for chart lines
   const lineColors = useMemo(() => {
-    const industries = forecastData?.industry_composition.map(i => i.industry) || 
-      ['Technology', 'Healthcare', 'Finance'];
+    const industries = forecastData?.industry_details
+      ?.slice(0, 10)
+      .map(i => i.industry) || [];
     
-    return industries.map((_, index) => ({
-      key: industries[index],
-      name: industries[index],
-      color: index === 0 ? CHART_COLORS.line1 : 
-             index === 1 ? CHART_COLORS.line2 : 
-             CHART_COLORS.line3
+    return industries.map((industry, index) => ({
+      key: industry,
+      name: industry.length > 25 ? industry.substring(0, 25) + '...' : industry,
+      color: CHART_COLORS[index % CHART_COLORS.length]
+    }));
+  }, [forecastData]);
+
+  // Get top 10 industry details for the table - FORMAT FOR DISPLAY
+  const industryDetailsTop10 = useMemo(() => {
+    if (!forecastData?.industry_details?.length) return [];
+    
+    return forecastData.industry_details.slice(0, 10).map(item => ({
+      ...item,
+      // Format for display in table cells
+      currentDisplay: item.current >= 1_000_000 ? fmtM(item.current) : 
+                      item.current >= 1000 ? fmtK(item.current) : 
+                      item.current.toLocaleString(),
+      forecastDisplay: item.forecast >= 1_000_000 ? fmtM(item.forecast) : 
+                       item.forecast >= 1000 ? fmtK(item.forecast) : 
+                       item.forecast.toLocaleString(),
+    }));
+  }, [forecastData]);
+
+  // Format top jobs for display
+  const topJobsFormatted = useMemo(() => {
+    if (!forecastData?.top_jobs_forecast?.length) return [];
+    
+    return forecastData.top_jobs_forecast.map(job => ({
+      ...job,
+      valueDisplay: job.value >= 1_000_000 ? fmtM(job.value) : 
+                    job.value >= 1000 ? fmtK(job.value) : 
+                    job.value.toLocaleString()
     }));
   }, [forecastData]);
 
@@ -258,69 +258,40 @@ const TrendsForecasts = () => {
           </div>
         </div>
 
-        {/* Key Metrics */}
+        {/* Key Metrics - Now passing raw numbers */}
         {metrics.length > 0 && <MetricsGrid metrics={metrics} />}
 
-        {/* Charts */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Est. Job Composition by Industry */}
-          <Card className="glass-card">
-            <CardHeader>
-              <SectionHeader
-                title={`Est. Job Composition (${forecastYear})`}
-                subtitle="Projected job postings by industry"
-              />
-            </CardHeader>
-            <CardContent>
-              {industryChartData.length > 0 ? (
-                <StackedBarChart
-                  data={industryChartData}
-                  xAxisKey="industry"
-                  bars={[
-                    { key: 'current', name: '2024 (Actual)', color: CHART_COLORS.current },
-                    { key: 'forecast', name: `${forecastYear} (Est.)`, color: CHART_COLORS.forecast },
-                  ]}
-                  height={350}
+        {/* Full Width Employment Forecast Chart */}
+        <Card className="glass-card">
+          <CardHeader>
+            <SectionHeader
+              title="Est. Employment per Industry"
+              subtitle={`Historical (2011-2024) with projections to ${forecastYear} (Top 10 industries)`}
+            />
+          </CardHeader>
+          <CardContent>
+            {employmentChartData.length > 0 && lineColors.length > 0 ? (
+              <>
+                <MultiLineChart
+                  data={employmentChartData}
+                  xAxisKey="year"
+                  lines={lineColors}
+                  height={450}
+                  maxLines={10}
                 />
-              ) : (
-                <div className="flex items-center justify-center h-[350px] text-muted-foreground">
-                  No industry composition data available
+                {/* Forecast indicator line */}
+                <div className="flex items-center justify-center gap-2 mt-4 text-sm text-muted-foreground">
+                  <div className="w-8 h-0.5 bg-muted-foreground/50" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 4px, currentColor 4px, currentColor 8px)' }} />
+                  <span>Projected values (2025-{forecastYear})</span>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Est. Employment Over Time */}
-          <Card className="glass-card">
-            <CardHeader>
-              <SectionHeader
-                title="Est. Employment per Industry"
-                subtitle="Historical (2011-2024) with future projections"
-              />
-            </CardHeader>
-            <CardContent>
-              {employmentChartData.length > 0 ? (
-                <>
-                  <MultiLineChart
-                    data={employmentChartData}
-                    xAxisKey="year"
-                    lines={lineColors}
-                    height={350}
-                  />
-                  {/* Forecast indicator line */}
-                  <div className="flex items-center justify-center gap-2 mt-4 text-sm text-muted-foreground">
-                    <div className="w-8 h-0.5 bg-muted-foreground/50" style={{ backgroundImage: 'repeating-linear-gradient(90deg, transparent, transparent 4px, currentColor 4px, currentColor 8px)' }} />
-                    <span>Projected values (2025-{forecastYear})</span>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center justify-center h-[350px] text-muted-foreground">
-                  No employment forecast data available
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-[450px] text-muted-foreground">
+                No employment forecast data available
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Est. Top Jobs */}
         <Card className="glass-card">
@@ -331,9 +302,9 @@ const TrendsForecasts = () => {
             />
           </CardHeader>
           <CardContent>
-            {forecastData.top_jobs_forecast?.length > 0 ? (
+            {topJobsFormatted.length > 0 ? (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {forecastData.top_jobs_forecast.map((job, index) => (
+                {topJobsFormatted.map((job, index) => (
                   <div
                     key={job.name}
                     className="p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 transition-colors group"
@@ -349,7 +320,7 @@ const TrendsForecasts = () => {
                       {job.name}
                     </h4>
                     <p className="text-2xl font-bold text-cyan mt-2">
-                      {job.value >= 1000 ? `${(job.value / 1000).toFixed(0)}K` : job.value}
+                      {job.valueDisplay}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Est. job postings in {forecastYear}
@@ -365,16 +336,16 @@ const TrendsForecasts = () => {
           </CardContent>
         </Card>
 
-        {/* Industry Forecast Details */}
+        {/* Industry Forecast Details - Top 10 */}
         <Card className="glass-card">
           <CardHeader>
             <SectionHeader
               title="Industry Forecast Comparison"
-              subtitle="Current vs projected job postings"
+              subtitle={`Top 10 industries by projected job postings in ${forecastYear}`}
             />
           </CardHeader>
           <CardContent>
-            {forecastData.industry_details?.length > 0 ? (
+            {industryDetailsTop10.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -397,17 +368,17 @@ const TrendsForecasts = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {forecastData.industry_details.map((row) => (
+                    {industryDetailsTop10.map((row) => (
                       <tr
                         key={row.industry}
                         className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
                       >
                         <td className="py-3 px-4 font-medium">{row.industry}</td>
                         <td className="py-3 px-4 text-right text-muted-foreground">
-                          {row.current.toLocaleString()}
+                          {row.currentDisplay}
                         </td>
                         <td className="py-3 px-4 text-right text-cyan font-medium">
-                          {row.forecast.toLocaleString()}
+                          {row.forecastDisplay}
                         </td>
                         <td
                           className={`py-3 px-4 text-right font-medium ${
@@ -447,7 +418,5 @@ const TrendsForecasts = () => {
     </DashboardLayout>
   );
 };
-
-
 
 export default TrendsForecasts;
