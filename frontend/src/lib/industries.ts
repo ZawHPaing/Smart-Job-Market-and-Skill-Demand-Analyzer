@@ -154,8 +154,8 @@ export const IndustriesAPI = {
   top: (year: number, limit = 6, by: "employment" | "salary" = "employment") =>
     apiGet<IndustryTopResponse>("/industries/top", { year, limit, by }),
 
-  topTrends: (year_from = 2019, year_to = 2024, limit = 3) =>
-    apiGet<IndustryTopTrendsResponse>("/industries/top-trends", { year_from, year_to, limit }),
+  topTrends: (year_from = 2019, year_to = 2024, limit = 10) =>  // Changed from 3 to 10
+  apiGet<IndustryTopTrendsResponse>("/industries/top-trends", { year_from, year_to, limit }),
 
   composition: (year: number, limit = 6) =>
     apiGet<IndustryCompositionResponse>("/industries/composition", { year, limit }),

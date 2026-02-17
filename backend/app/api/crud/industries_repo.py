@@ -453,15 +453,29 @@ class IndustryRepo:
     # -------------------------
     # trends: top industries time series
     # -------------------------
-    async def top_industries_trends(self, year_from: int, year_to: int, limit: int = 6) -> List[Dict[str, Any]]:
+    async def top_industries_trends(self, year_from: int, year_to: int, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get time series data for top industries by employment.
+        
+        Args:
+            year_from: Start year
+            year_to: End year
+            limit: Number of top industries to return (default: 10)
+        
+        Returns:
+            List of industry trend data with points for each year
+        """
         if year_to < year_from:
             year_from, year_to = year_to, year_from
 
+        # Get top industries by employment for the latest year in the range
         top = await self.top_industries(year=year_to, limit=limit, by="employment")
         naics_list = [t["naics"] for t in top if t.get("naics")]
+        
         if not naics_list:
             return []
 
+        # Query data for all these industries across the year range
         q = {
             "year": {"$gte": int(year_from), "$lte": int(year_to)},
             "occ_code": "00-0000",
@@ -470,20 +484,24 @@ class IndustryRepo:
         proj = {"_id": 0, "naics": 1, "naics_title": 1, "year": 1, "tot_emp": 1}
         cursor = self.db["bls_oews"].find(q, proj)
 
+        # Organize by NAICS code
         by_naics: Dict[str, Dict[str, Any]] = {}
         async for doc in cursor:
             naics = str(doc.get("naics", "")).strip()
             title = str(doc.get("naics_title", "")).strip()
             y = int(doc.get("year"))
             emp = _to_float(doc.get("tot_emp"))
+            
             if naics not in by_naics:
                 by_naics[naics] = {"naics": naics, "naics_title": title, "points": []}
             by_naics[naics]["points"].append({"year": y, "employment": emp})
 
+        # Build output in the same order as top industries
         out: List[Dict[str, Any]] = []
-        for t in top:  # preserve top ordering
+        for t in top:
             naics = t["naics"]
             if naics in by_naics:
+                # Sort points by year ascending
                 by_naics[naics]["points"].sort(key=lambda p: p["year"])
                 out.append(by_naics[naics])
 

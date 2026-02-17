@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { DashboardLayout, useYear } from "@/components/layout";
 import { MetricsGrid, SectionHeader } from "@/components/dashboard";
-import { DonutChart, HorizontalBarChart, MultiLineChart } from "@/components/charts";
+import { HorizontalBarChart, MultiLineChart } from "@/components/charts";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { DonutChart } from "@/components/charts/DonutChart";
 
 const API_BASE = "http://127.0.0.1:8000/api";
 
@@ -75,7 +76,8 @@ async function buildTrendAligned(
   yearFrom: number,
   yearTo: number
 ): Promise<{ data: Record<string, any>[]; lines: { key: string; name: string; color: string }[] }> {
-  const top = dedupeByNaics(topItems).slice(0, 6);
+  // Take top 10 industries
+  const top = dedupeByNaics(topItems).slice(0, 10);
   const topNaics = top.map((i: any) => String(i.naics || "").trim()).filter(Boolean);
   const topTitleByNaics = new Map(
     top.map((i: any) => [String(i.naics || "").trim(), String(i.naics_title || "").trim()])
@@ -115,7 +117,9 @@ async function buildTrendAligned(
   const years = new Set<number>();
   for (const naics of topNaics) {
     const s = seriesByNaics.get(naics);
-    for (const p of s?.points || []) years.add(Number(p.year));
+    if (s?.points) {
+      for (const p of s.points) years.add(Number(p.year));
+    }
   }
   const sortedYears = Array.from(years).filter((y) => Number.isFinite(y)).sort((a, b) => a - b);
 
@@ -123,19 +127,24 @@ async function buildTrendAligned(
     const row: Record<string, any> = { year: y };
     for (const naics of topNaics) {
       const s = seriesByNaics.get(naics);
-      const p = (s?.points || []).find((pt: any) => Number(pt?.year) === y);
+      const p = s?.points?.find((pt: any) => Number(pt?.year) === y);
       row[safeKey(naics)] = p ? toNumber(p?.employment) : null;
     }
     return row;
   });
 
+  // Extended color palette for 10 items
   const palette = [
-    "hsl(186 100% 50%)",
-    "hsl(0 100% 71%)",
-    "hsl(258 90% 76%)",
-    "hsl(142 76% 45%)",
-    "hsl(43 96% 56%)",
-    "hsl(330 100% 65%)",
+    "hsl(186 100% 50%)", // cyan
+    "hsl(0 100% 71%)",   // coral/red
+    "hsl(258 90% 76%)",  // purple
+    "hsl(142 76% 45%)",  // green
+    "hsl(43 96% 56%)",   // amber
+    "hsl(330 100% 65%)", // pink
+    "hsl(215 100% 65%)", // blue
+    "hsl(30 100% 65%)",  // orange
+    "hsl(280 70% 65%)",  // lavender
+    "hsl(190 90% 55%)",  // teal
   ];
 
   const used = new Map<string, number>();
@@ -170,14 +179,13 @@ export default function Home() {
       try {
         setLoading(true);
 
-        // IMPORTANT:
-        // /industries/ is your list endpoint (trailing slash avoids 307 redirect)
+        // Fetch all data in parallel
         const [mRes, listRes, topRes, trendsRes, topJobsRes] = await Promise.all([
           fetch(`${API_BASE}/industries/metrics/${year}`),
-          fetch(`${API_BASE}/industries/?year=${year}`),
-          fetch(`${API_BASE}/industries/top?year=${year}&limit=20&by=employment`), // grab more, then we dedupe+take 6
-          fetch(`${API_BASE}/industries/top-trends?year_from=2019&year_to=${year}&limit=10`),
-          fetch(`${API_BASE}/jobs/top?year=${year}&limit=6&by=employment`),
+          fetch(`${API_BASE}/industries/?year=${year}&limit=1000`),
+          fetch(`${API_BASE}/industries/top?year=${year}&limit=20&by=employment`),
+          fetch(`${API_BASE}/industries/top-trends?year_from=2019&year_to=${year}&limit=10`), // Explicitly set limit=10
+          fetch(`${API_BASE}/jobs/top?year=${year}&limit=10&by=employment`),
         ]);
 
         // If any response isn't ok, throw so we don't silently build empty charts
@@ -207,7 +215,10 @@ export default function Home() {
           : topJson.items || topJson.industries || topJson.top || [];
         setTopIndustries(topItems);
 
-        const series = Array.isArray(trendsJson) ? trendsJson : trendsJson.series || [];
+        // Handle trends data - ensure we get the series array
+        const series = Array.isArray(trendsJson) 
+          ? trendsJson 
+          : trendsJson.series || trendsJson.items || trendsJson.trends || [];
         setTopTrends(series);
 
         const topJobItems = Array.isArray(topJobsJson)
@@ -215,7 +226,7 @@ export default function Home() {
           : topJobsJson.jobs || topJobsJson.items || [];
         setTopJobs(topJobItems);
 
-        // ---- trends aligned to top 6 industries ----
+        // ---- trends aligned to top 10 industries ----
         const aligned = await buildTrendAligned(topItems, series, 2019, year);
         if (!cancelled) {
           setTrendData(aligned.data);
@@ -225,7 +236,7 @@ export default function Home() {
         // ---- unique job titles (based on top industries, deduped) ----
         (async () => {
           try {
-            const dedupTop = dedupeByNaics(topItems).slice(0, 8);
+            const dedupTop = dedupeByNaics(topItems).slice(0, 10);
             if (!dedupTop.length) {
               if (!cancelled) setUniqueJobTitles(0);
               return;
@@ -274,22 +285,56 @@ export default function Home() {
     };
   }, [year]);
 
-  // ✅ TOP 6 donut (dedupe by naics, then slice 6)
+  // ✅ TOP 10 donut with "Others" category
   const donutData = useMemo(() => {
     const srcRaw = topIndustries.length ? topIndustries : industryList;
-    const src = dedupeByNaics(srcRaw).slice(0, 6);
-
-    return src
+    const src = dedupeByNaics(srcRaw);
+    
+    if (src.length === 0) return [];
+    
+    // Sort by employment value descending
+    const sorted = [...src].sort((a, b) => {
+      const valA = toNumber(a.total_employment ?? a.employment ?? a.tot_emp ?? a.value);
+      const valB = toNumber(b.total_employment ?? b.employment ?? b.tot_emp ?? b.value);
+      return valB - valA;
+    });
+    
+    // Take top 10 for individual display
+    const top10 = sorted.slice(0, 10);
+    
+    // Calculate total employment for all industries
+    const totalEmployment = sorted.reduce((sum, it) => 
+      sum + toNumber(it.total_employment ?? it.employment ?? it.tot_emp ?? it.value), 0
+    );
+    
+    // Calculate "Others" sum from remaining industries
+    const remaining = sorted.slice(10);
+    const othersSum = remaining.reduce((sum, it) => 
+      sum + toNumber(it.total_employment ?? it.employment ?? it.tot_emp ?? it.value), 0
+    );
+    
+    // Build chart data with top 10 + Others
+    const chartData = top10
       .map((it: any) => ({
         name: it.naics_title || it.name || "Unknown",
         value: toNumber(it.total_employment ?? it.employment ?? it.tot_emp ?? it.value),
       }))
       .filter((x) => x.value > 0);
+    
+    // Add Others category if there are remaining industries with positive values
+    if (remaining.length > 0 && othersSum > 0) {
+      chartData.push({
+        name: "Others",
+        value: othersSum,
+      });
+    }
+    
+    return chartData;
   }, [topIndustries, industryList]);
 
-  // ✅ TOP 6 job titles by employment (cross-industry), with median salary
+  // ✅ TOP 10 job titles by employment (cross-industry), with median salary
   const topJobChartData = useMemo(() => {
-    const src = (topJobs || []).slice(0, 6);
+    const src = (topJobs || []).slice(0, 10);
     return src.map((it: any) => ({
       name: it.occ_title || it.name || "Unknown",
       value: toNumber(it.total_employment ?? it.employment ?? it.tot_emp),
@@ -298,8 +343,11 @@ export default function Home() {
     }));
   }, [topJobs]);
 
-  // ✅ TOP 6 trend lines aligned to Top 6 industries
-  const trend = useMemo(() => ({ data: trendData, lines: trendLines }), [trendData, trendLines]);
+  // ✅ TOP 10 trend lines aligned to Top 10 industries
+  const trend = useMemo(() => ({ 
+    data: trendData, 
+    lines: trendLines 
+  }), [trendData, trendLines]);
 
   // ---------- Metrics cards ----------
   const cards = useMemo(() => {
@@ -366,12 +414,20 @@ export default function Home() {
             <CardHeader>
               <SectionHeader
                 title="Job Distributions by Industry"
-                subtitle={`${year} employment breakdown (Top 6)`}
+                subtitle={`${year} employment breakdown (Top 10 + Others)`}
                 action={{ label: "See More", href: "/industries" }}
               />
             </CardHeader>
-            <CardContent>
-              <DonutChart data={donutData} />
+            <CardContent className="min-h-[500px]">
+              {donutData.length === 0 ? (
+                <div className="text-muted-foreground">No industry data available</div>
+              ) : (
+                <DonutChart 
+                  data={donutData} 
+                  height={450} 
+                  topListCount={10}
+                />
+              )}
             </CardContent>
           </Card>
 
@@ -379,17 +435,21 @@ export default function Home() {
             <CardHeader>
               <SectionHeader
                 title="Top Job Titles & Salary"
-                subtitle="Cross-industry job titles by employment (Top 6)"
+                subtitle="Cross-industry job titles by employment (Top 10)"
                 action={{ label: "See More", href: "/industries" }}
               />
             </CardHeader>
-            <CardContent>
-              <HorizontalBarChart
-                data={topJobChartData}
-                showSecondary
-                primaryLabel="Employment"
-                secondaryLabel="Median Salary"
-              />
+            <CardContent className="min-h-[500px]">
+              {topJobChartData.length === 0 ? (
+                <div className="text-muted-foreground">No job data available</div>
+              ) : (
+                <HorizontalBarChart
+                  data={topJobChartData}
+                  showSecondary
+                  primaryLabel="Employment"
+                  secondaryLabel="Median Salary"
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -398,15 +458,21 @@ export default function Home() {
           <CardHeader>
             <SectionHeader
               title="Employment per Industry Over Time"
-              subtitle="Top 6 industries by employment (time series)"
+              subtitle="Top 10 industries by employment (time series)"
               action={{ label: "View Trends", href: "/industries" }}
             />
           </CardHeader>
           <CardContent>
             {trend.data.length === 0 || trend.lines.length === 0 ? (
-              <div className="text-muted-foreground">No trend data</div>
+              <div className="text-muted-foreground">No trend data available</div>
             ) : (
-              <MultiLineChart data={trend.data} xAxisKey="year" lines={trend.lines} height={300} />
+              <MultiLineChart 
+                data={trend.data} 
+                xAxisKey="year" 
+                lines={trend.lines} 
+                height={400}
+                maxLines={10}
+              />
             )}
           </CardContent>
         </Card>

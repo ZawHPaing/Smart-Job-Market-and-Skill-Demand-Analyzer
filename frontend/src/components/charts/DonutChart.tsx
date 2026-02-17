@@ -18,14 +18,18 @@ interface DonutChartProps {
 }
 
 const COLORS = [
-  "hsl(186 100% 50%)",
-  "hsl(0 100% 71%)",
-  "hsl(258 90% 76%)",
-  "hsl(142 70% 45%)",
-  "hsl(38 92% 50%)",
-  "hsl(330 85% 60%)",
-  "hsl(215 90% 60%)",
-  "hsl(55 92% 55%)",
+  "hsl(186 100% 50%)", // cyan
+  "hsl(0 100% 71%)",   // coral/red
+  "hsl(258 90% 76%)",  // purple
+  "hsl(142 70% 45%)",  // green
+  "hsl(38 92% 50%)",   // amber/orange
+  "hsl(330 85% 60%)",  // pink
+  "hsl(215 90% 60%)",  // blue
+  "hsl(55 92% 55%)",   // yellow
+  "hsl(280 70% 65%)",  // lavender
+  "hsl(190 90% 55%)",  // teal
+  "hsl(350 80% 65%)",  // rose
+  "hsl(120 60% 50%)",  // forest green
 ];
 
 function shortName(name: string, max = 22) {
@@ -57,7 +61,7 @@ const DonutTooltip = ({ active, payload }: any) => {
 export function DonutChart({
   data,
   height = 260,
-  topListCount = 6,
+  topListCount = 10, // Changed default to 10
 }: DonutChartProps) {
   const total = data.reduce((a, b) => a + (b.value || 0), 0) || 1;
 
@@ -71,6 +75,11 @@ export function DonutChart({
   const topList = [...withPct]
     .sort((a, b) => (b.value || 0) - (a.value || 0))
     .slice(0, topListCount);
+
+  // Split into two columns for display
+  const midPoint = Math.ceil(topList.length / 2);
+  const leftColumn = topList.slice(0, midPoint);
+  const rightColumn = topList.slice(midPoint);
 
   return (
     <div className="w-full">
@@ -122,28 +131,70 @@ export function DonutChart({
         </ResponsiveContainer>
       </div>
 
-      {/* Clean label list (instead of ugly legend) */}
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {topList.map((d, i) => (
-          <div
-            key={d.name}
-            className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2"
-            title={d.name} // full name on hover
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: COLORS[i % COLORS.length] }}
-              />
-              <span className="text-sm text-muted-foreground truncate">
-                {shortName(d.name, 30)}
-              </span>
-            </div>
-            <div className="text-sm font-medium text-foreground">
-              {fmtPct(d.__pct)}
-            </div>
+      {/* Double column label list */}
+      <div className="mt-3">
+        <div className="grid grid-cols-2 gap-3">
+          {/* Left Column */}
+          <div className="space-y-2">
+            {leftColumn.map((d, idx) => {
+              const originalIndex = topList.findIndex(item => item.name === d.name);
+              return (
+                <div
+                  key={d.name}
+                  className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+                  title={d.name}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: COLORS[originalIndex % COLORS.length] }}
+                    />
+                    <span className="text-sm text-muted-foreground truncate">
+                      {shortName(d.name, 25)}
+                    </span>
+                  </div>
+                  <div className="text-sm font-medium text-foreground whitespace-nowrap ml-2">
+                    {fmtPct(d.__pct)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        ))}
+
+          {/* Right Column */}
+          <div className="space-y-2">
+            {rightColumn.map((d, idx) => {
+              const originalIndex = topList.findIndex(item => item.name === d.name);
+              return (
+                <div
+                  key={d.name}
+                  className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+                  title={d.name}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: COLORS[originalIndex % COLORS.length] }}
+                    />
+                    <span className="text-sm text-muted-foreground truncate">
+                      {shortName(d.name, 25)}
+                    </span>
+                  </div>
+                  <div className="text-sm font-medium text-foreground whitespace-nowrap ml-2">
+                    {fmtPct(d.__pct)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* If odd number of items, show total count */}
+        {topList.length > 0 && (
+          <p className="mt-3 text-xs text-muted-foreground text-center">
+            Showing top {topList.length} industries by employment
+          </p>
+        )}
       </div>
 
       <p className="mt-2 text-xs text-muted-foreground">

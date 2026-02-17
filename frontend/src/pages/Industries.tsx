@@ -4,7 +4,7 @@ import { Search } from "lucide-react";
 
 import { DashboardLayout, useYear } from "@/components/layout";
 import { MetricsGrid, SectionHeader } from "@/components/dashboard";
-import { StackedBarChart, MultiLineChart } from "@/components/charts";
+import { MultiLineChart } from "@/components/charts";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ function pctBadgeClass(pct?: number | null) {
   return pct >= 0 ? "text-green-500" : "text-coral";
 }
 
-// ✅ chart colors
+// ✅ Extended chart colors for 10 items
 const CHART_COLORS = [
   "hsl(186 100% 50%)", // cyan
   "hsl(258 90% 76%)", // purple
@@ -31,6 +31,10 @@ const CHART_COLORS = [
   "hsl(45 100% 55%)", // amber
   "hsl(142 71% 45%)", // green
   "hsl(210 100% 60%)", // blue
+  "hsl(330 85% 60%)", // pink
+  "hsl(280 70% 65%)", // lavender
+  "hsl(190 90% 55%)", // teal
+  "hsl(120 60% 50%)", // forest green
 ];
 const pickColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length];
 
@@ -48,7 +52,7 @@ function normalizeOccLegend(legend: any[]): { key: string; name: string }[] {
 }
 
 // ---- Trends: exclude Cross-industry and dedupe by title ----
-function normalizeTrendSeries(rawSeries: any[], takeN = 6) {
+function normalizeTrendSeries(rawSeries: any[], takeN = 10) {  // Changed from 6 to 10
   const series = Array.isArray(rawSeries) ? rawSeries : [];
 
   const isCross = (s: any) => String(s?.naics_title || "").toLowerCase().includes("cross-industry");
@@ -81,10 +85,6 @@ export default function Industries() {
   const [allIndustries, setAllIndustries] = useState<any[]>([]);
   const [topIndustries, setTopIndustries] = useState<any[]>([]);
 
-  // Top 3 occupations per industry
-  const [topOccRows, setTopOccRows] = useState<any[]>([]);
-  const [topOccLegend, setTopOccLegend] = useState<{ key: string; name: string }[]>([]);
-
   // trends chart
   const [trendRows, setTrendRows] = useState<any[]>([]);
   const [trendSeries, setTrendSeries] = useState<{ key: string; name: string }[]>([]);
@@ -103,15 +103,13 @@ export default function Industries() {
       try {
         const yearFrom = Math.max(2019, year - 5);
 
-        const [m, list, top, topOcc, trends] = await Promise.all([
+        const [m, list, top, trends] = await Promise.all([
           IndustriesAPI.dashboardMetrics(year),
           IndustriesAPI.top(year, 1000, "employment"),
-          IndustriesAPI.top(year, 6, "employment"),
-          IndustriesAPI.compositionTopOccupations(year, 6, 3),
+          IndustriesAPI.top(year, 10, "employment"),  // Changed from 6 to 10
 
-          // ✅ IMPORTANT: request MORE because API can return duplicates.
-          // We will locally reduce to "Top 6 unique"
-          IndustriesAPI.topTrends(yearFrom, year, 10),
+          // ✅ Request 10 trends
+          IndustriesAPI.topTrends(yearFrom, year, 10),  // Changed from 3/6 to 10
         ]);
 
         if (cancelled) return;
@@ -120,10 +118,7 @@ export default function Industries() {
         setAllIndustries(list.industries || list.items || list.industries || []);
         setTopIndustries(top.industries);
 
-        setTopOccRows(topOcc.rows || []);
-        setTopOccLegend(normalizeOccLegend(topOcc.legend || []));
-
-        // ✅ Align trends to the same Top 6 industries shown in cards
+        // ✅ Align trends to the same Top 10 industries shown in cards
         const topList = top.industries || [];
         const topNaics = topList.map((i: any) => String(i.naics || "").trim()).filter(Boolean);
         const topTitleByNaics = new Map(
@@ -133,6 +128,7 @@ export default function Industries() {
         const rawSeries = trends?.series || [];
         const seriesByNaics = new Map<string, any>();
         const seriesByTitle = new Map<string, any>();
+        
         for (const s of rawSeries) {
           const naics = String(s?.naics || "").trim();
           const title = String(s?.naics_title || "").trim();
@@ -173,7 +169,9 @@ export default function Industries() {
         for (const naics of topNaics) {
           const titleKey = (topTitleByNaics.get(naics) || "").toLowerCase();
           const s = seriesByNaics.get(naics) || (titleKey ? seriesByTitle.get(titleKey) : undefined);
-          for (const p of s?.points || []) years.add(Number(p.year));
+          if (s?.points) {
+            for (const p of s.points) years.add(Number(p.year));
+          }
         }
 
         const sortedYears = Array.from(years).sort((a, b) => a - b);
@@ -285,17 +283,6 @@ export default function Industries() {
     ];
   }, [metrics]);
 
-  // chart configs (typed: must include color)
-  const stackedBars = useMemo(
-    () =>
-      topOccLegend.map((l, i) => ({
-        key: l.key,
-        name: l.name,
-        color: pickColor(i),
-      })),
-    [topOccLegend]
-  );
-
   const trendLines = useMemo(
     () =>
       trendSeries.map((s, i) => ({
@@ -336,10 +323,13 @@ export default function Industries() {
         {/* Metrics */}
         <MetricsGrid metrics={metricsGrid} />
 
-        {/* Top 6 Industries */}
+        {/* Top 10 Industries */}
         <Card className="glass-card">
           <CardHeader className="flex flex-row items-center justify-between gap-4">
-            <SectionHeader title="Top Industries" subtitle="Top 6 industries by total employment" />
+            <SectionHeader 
+              title="Top Industries" 
+              subtitle="Top 10 industries by total employment"  // Updated subtitle
+            />
             <Button variant="secondary" onClick={() => setShowMore((v) => !v)}>
               {showMore ? "Hide" : "See more"}
             </Button>
@@ -433,41 +423,23 @@ export default function Industries() {
           </CardContent>
         </Card>
 
-        {/* Charts */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Job Composition */}
-          <Card className="glass-card">
-            <CardHeader>
-              <SectionHeader
-                title="Job Composition by Industry"
-                subtitle="Top 3 occupations (by employment) inside each top industry"
-              />
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-muted-foreground">Loading...</div>
-              ) : (
-                <StackedBarChart data={topOccRows} xAxisKey="industry" bars={stackedBars} height={350} />
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Employment Over Time */}
-          <Card className="glass-card">
-            <CardHeader>
-              <SectionHeader title="Employment per Industry Over Time" subtitle="Top 6 industries by employment (time series)" />
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-muted-foreground">Loading...</div>
-              ) : (
-                <MultiLineChart data={trendRows} xAxisKey="year" lines={trendLines} height={350} />
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        {/* Employment Over Time - Full Width */}
+        <Card className="glass-card">
+          <CardHeader>
+            <SectionHeader 
+              title="Employment per Industry Over Time" 
+              subtitle="Top 10 industries by employment (time series)"  // Updated subtitle
+            />
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="text-muted-foreground">Loading...</div>
+            ) : (
+              <MultiLineChart data={trendRows} xAxisKey="year" lines={trendLines} height={400}  maxLines={10} />
+            )}
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );
 }
-

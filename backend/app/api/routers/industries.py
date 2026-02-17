@@ -94,7 +94,7 @@ async def top_industries(
 async def top_industries_trends(
     year_from: int = Query(2019),
     year_to: int = Query(2024),
-    limit: int = Query(3, ge=1, le=10),
+    limit: int = Query(10, ge=1, le=20),  # Changed default from 3 to 10, increased max to 20
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryTopTrendsResponse:
     repo = IndustryRepo(db)
