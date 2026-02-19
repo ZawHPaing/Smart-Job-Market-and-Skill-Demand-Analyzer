@@ -222,7 +222,7 @@ class JobDetailRepo:
         return round(growth_pct, 1)
     
     # -------------------------
-    # O*NET DATA METHODS (KEEP AS IS - THESE ARE FAST ENOUGH)
+    # O*NET DATA METHODS
     # -------------------------
     
     async def get_experience_required(self, onet_soc: str) -> str:
@@ -484,7 +484,7 @@ class JobDetailRepo:
         return activities
     
     # -------------------------
-    # COMPLETE JOB DETAIL - OPTIMIZED PARALLEL FETCHING
+    # COMPLETE JOB DETAIL - OPTIMIZED PARALLEL FETCHING WITH MORE ITEMS
     # -------------------------
     
     async def get_complete_job_detail(self, occ_code: str, year: int = 2024) -> Dict[str, Any]:
@@ -536,7 +536,7 @@ class JobDetailRepo:
             self.get_work_activities(onet_soc),
         ]
         
-        # Fetch trend data in parallel (these are now optimized)
+        # Fetch trend data in parallel
         trend_tasks = [
             self.get_job_growth_trend(occ_code),
             self.get_job_salary_trend(occ_code),
@@ -551,25 +551,36 @@ class JobDetailRepo:
         skills, tech_skills, tools, abilities, knowledge, education, activities = onet_results
         growth_trend, salary_trend, experience, skill_intensity = trend_results
         
-        # Categorize skills
+        # Categorize skills - soft skills should come from the top skills list
         all_skills = skills
         tech_skills_list = tech_skills
         soft_skills_list = []
         
-        soft_keywords = ["communication", "teamwork", "leadership", "problem solving", 
-                        "critical thinking", "active learning", "social", "coordination",
-                        "negotiation", "persuasion", "service", "management", "speaking",
-                        "writing", "listening", "cooperating", "instructing", "interpersonal"]
+        # Define soft skills keywords to identify them in the skills list
+        soft_keywords = [
+            "communication", "teamwork", "collaboration", "leadership", "problem solving", 
+            "critical thinking", "active learning", "social", "coordination",
+            "negotiation", "persuasion", "service", "management", "speaking",
+            "writing", "listening", "cooperating", "instructing", "interpersonal",
+            "adaptability", "flexibility", "creativity", "initiative", "dependability",
+            "attention to detail", "organization", "time management", "emotional intelligence",
+            "conflict resolution", "decision making", "mentoring", "training"
+        ]
         
+        # First, add all skills and mark them
         for skill in all_skills:
             skill_name = skill["name"].lower()
+            # Check if it's a soft skill
             if any(keyword in skill_name for keyword in soft_keywords):
                 skill["type"] = "soft"
                 soft_skills_list.append(skill)
             else:
                 skill["type"] = "general"
         
-        # Generate metrics (matches JobsRepo format)
+        # Sort soft skills by value and take top ones
+        soft_skills_list.sort(key=lambda x: x["value"], reverse=True)
+        
+        # Generate metrics
         metrics = []
         if basic_info:
             total_employment = _to_float(basic_info.get("tot_emp", 0))
@@ -613,18 +624,18 @@ class JobDetailRepo:
                 }
             ]
         
-        # Update result
+        # Update result with MORE items (increased limits)
         result.update({
             "metrics": metrics,
-            "skills": all_skills[:10],
-            "tech_skills": tech_skills_list,
-            "soft_skills": soft_skills_list[:6],
-            "activities": activities[:6],
-            "abilities": abilities[:6],
-            "knowledge": knowledge[:4],
+            "skills": all_skills[:20],  # Keep top 20 for sorting/filtering
+            "tech_skills": tech_skills_list[:15],  # Return up to 15 tech skills
+            "soft_skills": soft_skills_list[:15],  # Return up to 15 soft skills from the skills list
+            "activities": activities[:15],  # Return up to 15 activities
+            "abilities": abilities[:15],  # Return up to 15 abilities
+            "knowledge": knowledge[:10],  # Return up to 10 knowledge areas
             "education": education,
-            "tools": tools[:6],
-            "work_activities": activities[:6]
+            "tools": tools[:15],  # Return up to 15 tools
+            "work_activities": activities[:15]  # Return up to 15 work activities
         })
         
         return result

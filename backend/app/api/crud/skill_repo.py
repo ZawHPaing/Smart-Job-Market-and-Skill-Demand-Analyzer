@@ -120,18 +120,20 @@ class SkillRepo:
                 """
                 MATCH (j:Job)-[r:REQUIRES]->(s:Skill {name: $skill_name})
                 WHERE r.Hot_Technology IS NOT NULL OR r.In_Demand IS NOT NULL
-                RETURN r.Hot_Technology AS hot_technology,
-                       r.In_Demand AS in_demand
-                LIMIT 1
+                RETURN COLLECT(DISTINCT r.Hot_Technology) AS hot_tech_values,
+                       COLLECT(DISTINCT r.In_Demand) AS in_demand_values
                 """,
                 skill_name=skill_name
             )
             record = await result.single()
             
             if record:
+                hot_tech_values = record.get("hot_tech_values", [])
+                in_demand_values = record.get("in_demand_values", [])
+                
                 return {
-                    "hot_technology": record.get("hot_technology", False) or False,
-                    "in_demand": record.get("in_demand", False) or False
+                    "hot_technology": any(hot for hot in hot_tech_values if hot),
+                    "in_demand": any(demand for demand in in_demand_values if demand)
                 }
         
         return {"hot_technology": False, "in_demand": False}
@@ -253,8 +255,8 @@ class SkillRepo:
             }
     
     # -------------------------
-# Get Co-occurring Skills - FIXED to properly calculate averages
-# -------------------------
+    # Get Co-occurring Skills - COMPLETELY FIXED for ALL skill types
+    # -------------------------
     async def get_co_occurring_skills(
         self, 
         skill_name: str, 
@@ -262,11 +264,27 @@ class SkillRepo:
     ) -> List[Dict[str, Any]]:
         """
         Get skills that frequently appear together with this skill.
+        Works for ALL skill types (tech, ability, knowledge, work_activity, etc.)
         """
         if not skill_name:
             return []
             
         async with self.driver.session() as session:
+            # First, get the total number of jobs that require the target skill
+            total_jobs_result = await session.run(
+                """
+                MATCH (j:Job)-[:REQUIRES]->(s:Skill {name: $skill_name})
+                RETURN count(DISTINCT j) AS total_target_jobs
+                """,
+                skill_name=skill_name
+            )
+            total_jobs_record = await total_jobs_result.single()
+            total_target_jobs = total_jobs_record["total_target_jobs"] if total_jobs_record else 0
+            
+            if total_target_jobs == 0:
+                return []
+            
+            # Now find co-occurring skills with proper calculations
             result = await session.run(
                 """
                 // Find jobs that require the target skill
@@ -279,43 +297,63 @@ class SkillRepo:
                 // Aggregate by skill to avoid duplicates
                 WITH s2, 
                     COLLECT(DISTINCT j) AS jobs,
-                    COLLECT(r2) AS relationships
+                    COLLECT(r2) AS relationships,
+                    COLLECT(r2.Hot_Technology) AS hot_tech_values,
+                    COLLECT(r2.In_Demand) AS in_demand_values
+                
+                // Calculate metrics
                 WITH s2, 
                     SIZE(jobs) AS co_occurrence_frequency,
                     REDUCE(s = 0.0, rel IN relationships | s + rel.importance) / SIZE(relationships) AS avg_importance,
-                    REDUCE(s = 0.0, rel IN relationships | s + rel.level) / SIZE(relationships) AS avg_level
+                    REDUCE(s = 0.0, rel IN relationships | s + rel.level) / SIZE(relationships) AS avg_level,
+                    // Check if any relationship has Hot_Technology or In_Demand as true
+                    CASE 
+                        WHEN SIZE(hot_tech_values) > 0 THEN ANY(hot IN hot_tech_values WHERE hot = true)
+                        ELSE false
+                    END AS hot_technology,
+                    CASE 
+                        WHEN SIZE(in_demand_values) > 0 THEN ANY(demand IN in_demand_values WHERE demand = true)
+                        ELSE false
+                    END AS in_demand
                 
-                // Get total jobs for each co-occurring skill
+                // Get total jobs for each co-occurring skill (for rate calculation)
                 OPTIONAL MATCH (s2)<-[:REQUIRES]-(all_j:Job)
                 WITH s2, 
                     co_occurrence_frequency,
                     avg_importance,
                     avg_level,
+                    hot_technology,
+                    in_demand,
                     COUNT(DISTINCT all_j) AS total_jobs_for_s2
                 
-                // Calculate co-occurrence rate (percentage)
+                // Calculate co-occurrence rate using the target skill's job count as denominator
                 WITH s2, 
                     co_occurrence_frequency,
                     total_jobs_for_s2,
                     avg_importance,
                     avg_level,
+                    hot_technology,
+                    in_demand,
                     CASE 
-                        WHEN total_jobs_for_s2 > 0 
-                        THEN toFloat(co_occurrence_frequency) / toFloat(total_jobs_for_s2) * 100
+                        WHEN $total_target_jobs > 0 
+                        THEN toFloat(co_occurrence_frequency) / toFloat($total_target_jobs) * 100
                         ELSE 0 
                     END AS co_occurrence_rate
                 
                 RETURN s2.name AS name,
                     s2.classification AS classification,
-                    co_occurrence_frequency,
+                    co_occurrence_frequency AS frequency,
                     total_jobs_for_s2 AS usage_count,
                     co_occurrence_rate,
                     avg_importance,
-                    avg_level
+                    avg_level,
+                    hot_technology,
+                    in_demand
                 ORDER BY co_occurrence_rate DESC, co_occurrence_frequency DESC
                 LIMIT $limit
                 """,
                 skill_name=skill_name,
+                total_target_jobs=total_target_jobs,
                 limit=limit
             )
             
@@ -349,21 +387,28 @@ class SkillRepo:
                 else:
                     avg_level = 0
                 
-                # Get hot_technology and in_demand flags if they exist
-                hot_technology = False
-                in_demand = False
-                if skill_type == "tech":
-                    # You might want to fetch these from the relationship properties
+                # Get hot_technology and in_demand flags - ensure they're booleans
+                hot_technology = record.get("hot_technology", False)
+                in_demand = record.get("in_demand", False)
+                
+                # Ensure they're actual booleans
+                if hot_technology is None:
                     hot_technology = False
+                if in_demand is None:
                     in_demand = False
+                
+                # Ensure co_occurrence_rate is never None
+                co_occurrence_rate = record.get("co_occurrence_rate")
+                if co_occurrence_rate is None:
+                    co_occurrence_rate = 0
                 
                 skills.append({
                     "id": skill_id,
                     "name": name,
                     "type": skill_type,
-                    "frequency": record["co_occurrence_frequency"],
+                    "frequency": record.get("frequency", 0),
                     "usage_count": record.get("usage_count", 0),
-                    "co_occurrence_rate": round(record.get("co_occurrence_rate", 0), 1),
+                    "co_occurrence_rate": round(float(co_occurrence_rate), 1),
                     "avg_importance": avg_importance,
                     "avg_level": avg_level,
                     "hot_technology": hot_technology,
@@ -371,6 +416,10 @@ class SkillRepo:
                     "demand_trend": 0,
                     "salary_association": 0
                 })
+                
+                # Debug print for tech skills
+                if skill_type == 'tech':
+                    print(f"🔧 Tech skill found: {name}, hot_technology: {hot_technology}, in_demand: {in_demand}")
             
             # Remove any remaining duplicates just in case (by name)
             unique_skills = []
@@ -380,14 +429,13 @@ class SkillRepo:
                     seen_names.add(skill["name"])
                     unique_skills.append(skill)
             
-            print(f"Returning {len(unique_skills)} unique skills with all fields")
+            print(f"Returning {len(unique_skills)} unique skills with co_occurrence_rate calculated using target job count: {total_target_jobs}")
+            print(f"Tech skills with flags: {len([s for s in unique_skills if s['type'] == 'tech' and (s['hot_technology'] or s['in_demand'])])}")
             return unique_skills[:limit]
     
-        # -------------------------
-        # Get Top Jobs Requiring Skill
-        # -------------------------
-        # In get_top_jobs_for_skill method, fix the ORDER BY clause:
-
+    # -------------------------
+    # Get Top Jobs Requiring Skill - FIXED with proper flags
+    # -------------------------
     async def get_top_jobs_for_skill(
         self,
         skill_name: str,
@@ -395,6 +443,7 @@ class SkillRepo:
     ) -> List[Dict[str, Any]]:
         """
         Get top jobs that require this skill, ranked by importance
+        Works for ALL skill types
         """
         if not skill_name:
             return []
@@ -408,8 +457,8 @@ class SkillRepo:
                     j.title AS title,
                     r.importance AS importance,
                     r.level AS level,
-                    r.Hot_Technology AS hot_technology,
-                    r.In_Demand AS in_demand
+                    COALESCE(r.Hot_Technology, false) AS hot_technology,
+                    COALESCE(r.In_Demand, false) AS in_demand
                 ORDER BY r.importance DESC, 
                         r.level DESC,
                         j.title
@@ -489,7 +538,9 @@ class SkillRepo:
                 "group": "2",
                 "value": 25 - (i * 1.5),
                 "usage_count": skill.get("usage_count", 0),
-                "co_occurrence_rate": skill.get("co_occurrence_rate", 0)
+                "co_occurrence_rate": skill.get("co_occurrence_rate", 0),
+                "avg_importance": skill.get("avg_importance", 0),
+                "avg_level": skill.get("avg_level", 0)
             })
         
         # Create undirected links
@@ -609,7 +660,7 @@ class SkillRepo:
             elif skill_type == "tool":
                 # Tools only get skill type, no other KPIs
                 pass
-            # For all other skills - show importance and proficiency
+            # For all other skills (ability, knowledge, work_activity, etc.) - show importance and proficiency
             else:
                 ui_metrics.extend([
                     {

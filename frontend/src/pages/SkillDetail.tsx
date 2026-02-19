@@ -84,12 +84,13 @@ const SkillDetail = () => {
         const withRates = skillDetail.co_occurring_skills.filter(s => s.co_occurrence_rate && s.co_occurrence_rate > 0);
         console.log(`\n✅ Skills with co_occurrence_rate > 0: ${withRates.length}/${skillDetail.co_occurring_skills.length}`);
         
-        if (withRates.length === 0) {
-          console.log('⚠️ No skills have co_occurrence_rate > 0. Checking raw values:');
-          skillDetail.co_occurring_skills.slice(0, 3).forEach((skill, index) => {
-            console.log(`  Raw skill ${index + 1}:`, JSON.stringify(skill, null, 2));
-          });
-        }
+        // Check tech flags in co-occurring skills
+        const techSkills = skillDetail.co_occurring_skills.filter(s => s.type === 'tech');
+        console.log('🔧 Tech skills in co-occurring:', techSkills.map(s => ({
+          name: s.name,
+          hot_technology: s.hot_technology,
+          in_demand: s.in_demand
+        })));
       } else {
         console.log('⚠️ No co-occurring skills found!');
       }
@@ -196,8 +197,13 @@ const SkillDetail = () => {
     
     console.log('Top 4 skills:', sorted.map(s => ({
       name: s.name,
+      type: s.type,
       rate: s.co_occurrence_rate,
-      usage: s.usage_count
+      usage: s.usage_count,
+      hot_technology: s.hot_technology,
+      in_demand: s.in_demand,
+      avg_importance: s.avg_importance,
+      avg_level: s.avg_level
     })));
     
     return sorted;
@@ -300,37 +306,37 @@ const SkillDetail = () => {
 
         {/* Skill Usage & Network */}
         <div className="grid gap-6 lg:grid-cols-2">
-         {/* Skill Usage Ring */}
-<Card className="glass-card">
-  <CardHeader>
-    <SectionHeader
-      title="Skill Usage"
-      subtitle="Percentage of jobs requiring this skill"
-    />
-  </CardHeader>
-  <CardContent className="flex flex-col items-center">
-    <div className="relative w-full max-w-md mx-auto">
-      <DonutChart
-        data={usageData}
-        height={300}
-        topListCount={2}
-        context="skill"
-        showSubtitle={false}        // Turn off the subtitle
-        showHoverText={false}       // Turn off the hover text
-        showCenterTotal={false}     // Turn off the center total text
-      />
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <span className="text-4xl font-bold text-cyan">
-          {skillDetail.usage_percentage || 0}%
-        </span>
-        <span className="text-sm text-muted-foreground">of jobs</span>
-      </div>
-    </div>
-    <p className="mt-4 text-center text-muted-foreground">
-      {skillDetail.usage_percentage || 0}% of analyzed job postings require {skillDetail.basic_info.skill_name}
-    </p>
-  </CardContent>
-</Card>
+          {/* Skill Usage Ring */}
+          <Card className="glass-card">
+            <CardHeader>
+              <SectionHeader
+                title="Skill Usage"
+                subtitle="Percentage of jobs requiring this skill"
+              />
+            </CardHeader>
+            <CardContent className="flex flex-col items-center">
+              <div className="relative w-full max-w-md mx-auto">
+                <DonutChart
+                  data={usageData}
+                  height={300}
+                  topListCount={2}
+                  context="skill"
+                  showSubtitle={false}
+                  showHoverText={false}
+                  showCenterTotal={false}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-4xl font-bold text-cyan">
+                    {skillDetail.usage_percentage || 0}%
+                  </span>
+                  <span className="text-sm text-muted-foreground">of jobs</span>
+                </div>
+              </div>
+              <p className="mt-4 text-center text-muted-foreground">
+                {skillDetail.usage_percentage || 0}% of analyzed job postings require {skillDetail.basic_info.skill_name}
+              </p>
+            </CardContent>
+          </Card>
 
           {/* Co-Occurring Skills Network */}
           <Card className="glass-card">
@@ -358,7 +364,7 @@ const SkillDetail = () => {
           </Card>
         </div>
 
-        {/* What to Learn Next - WITH EXACT JOB NUMBERS */}
+        {/* What to Learn Next - CONDITIONAL DISPLAY FOR TECH VS OTHER SKILLS */}
         {nextSkills.length > 0 ? (
           <Card className="glass-card">
             <CardHeader>
@@ -414,7 +420,7 @@ const SkillDetail = () => {
                       </div>
                     </div>
 
-                    {/* EXACT JOB COUNT - using toLocaleString() */}
+                    {/* EXACT JOB COUNT */}
                     {skill.usage_count ? (
                       <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
                         <Users className="h-3 w-3" />
@@ -427,27 +433,56 @@ const SkillDetail = () => {
                       </div>
                     ) : null}
 
-                    {/* For tech skills, show hot/in demand flags instead of importance */}
-                    {skill.type === 'tech' && (
+                    {/* CONDITIONAL DISPLAY - TECH SKILLS SHOW BADGES, OTHERS SHOW IMPORTANCE */}
+                    {skill.type === 'tech' ? (
+                      // For tech skills, show hot/in demand badges
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {skill.hot_technology && (
+                        {skill.hot_technology ? (
                           <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
-                            🔥 Hot
+                            🔥 Hot Technology
                           </Badge>
-                        )}
-                        {skill.in_demand && (
+                        ) : null}
+                        {skill.in_demand ? (
                           <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
                             📈 In Demand
                           </Badge>
+                        ) : null}
+                        {/* Debug info - remove in production */}
+                        {process.env.NODE_ENV === 'development' && (
+                          <div className="text-xs text-muted-foreground mt-1 w-full">
+                            (hot: {skill.hot_technology ? 'yes' : 'no'}, demand: {skill.in_demand ? 'yes' : 'no'})
+                          </div>
+                        )}
+                        {/* If neither flag is true, show a placeholder to maintain height consistency */}
+                        {!skill.hot_technology && !skill.in_demand && (
+                          <div className="h-5"></div>
                         )}
                       </div>
-                    )}
-
-                    {/* Importance indicator for non-tech/tool skills */}
-                    {skill.avg_importance && skill.avg_importance > 0 && skill.type !== 'tech' && skill.type !== 'tool' && (
-                      <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                        <TrendingUp className="h-3 w-3" />
-                        <span>Importance: {Math.round(skill.avg_importance)}%</span>
+                    ) : skill.type === 'tool' ? (
+                      // For tools, show minimal info or nothing
+                      <div className="mt-2 h-5"></div>
+                    ) : (
+                      // For all other skills (ability, knowledge, work_activity, etc.), show importance and level
+                      <div className="mt-2 space-y-1">
+                        {skill.avg_importance && skill.avg_importance > 0 && (
+                          <div className="flex items-center gap-1 text-xs">
+                            <TrendingUp className="h-3 w-3 text-purple" />
+                            <span className="text-muted-foreground">Importance:</span>
+                            <span className="text-purple font-medium">{Math.round(skill.avg_importance)}%</span>
+                          </div>
+                        )}
+                        {skill.avg_level && skill.avg_level > 0 && (
+                          <div className="flex items-center gap-1 text-xs">
+                            <Briefcase className="h-3 w-3 text-coral" />
+                            <span className="text-muted-foreground">Proficiency:</span>
+                            <span className="text-coral font-medium">{Math.round(skill.avg_level)}%</span>
+                          </div>
+                        )}
+                        {/* If no importance/level data, show placeholder */}
+                        {(!skill.avg_importance || skill.avg_importance <= 0) && 
+                         (!skill.avg_level || skill.avg_level <= 0) && (
+                          <div className="h-5"></div>
+                        )}
                       </div>
                     )}
                   </Link>
@@ -499,6 +534,21 @@ const SkillDetail = () => {
                           </>
                         )}
                       </div>
+                      {/* Show tech flags for jobs if they exist */}
+                      {(job.hot_technology || job.in_demand) && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {job.hot_technology && (
+                            <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
+                              🔥 Hot Tech
+                            </Badge>
+                          )}
+                          {job.in_demand && (
+                            <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
+                              📈 In Demand
+                            </Badge>
+                          )}
+                        </div>
+                      )}
                     </div>
                     {job.median_salary && (
                       <span className="text-cyan font-medium ml-2">

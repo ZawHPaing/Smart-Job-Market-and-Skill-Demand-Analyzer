@@ -59,6 +59,7 @@ const JobDetail = () => {
         if (cancelled) return;
         setJobDetail(data);
         console.log('🟢 Job detail loaded:', data);
+        console.log('🟢 Knowledge count:', data.knowledge?.length);
       } catch (e: any) {
         if (cancelled) return;
         console.error('🔴 Job detail error:', e);
@@ -99,34 +100,36 @@ const JobDetail = () => {
     });
   }, [jobDetail]);
 
-  // Format skills for chart
+  // Format skills for chart - get 10 items
   const jobSkills = useMemo(() => {
     if (!jobDetail?.skills) return [];
-    return jobDetail.skills.slice(0, 8).map(skill => ({
+    return jobDetail.skills.slice(0, 10).map(skill => ({
       name: skill.name.length > 30 ? skill.name.substring(0, 30) + '...' : skill.name,
       value: Math.round(skill.value),
       type: skill.type,
     }));
   }, [jobDetail]);
 
-  // Tech and soft skills
-  const techSkills = jobDetail?.tech_skills?.slice(0, 6) || [];
-  const softSkills = jobDetail?.soft_skills?.slice(0, 4) || [];
+  // Tech and soft skills - get 10 each
+  const techSkills = jobDetail?.tech_skills?.slice(0, 10) || [];
+  
+  // Soft skills now come from the skills list (already filtered in backend)
+  const softSkills = jobDetail?.soft_skills?.slice(0, 10) || [];
 
-  // Activities for chart
+  // Activities for chart - get 10 items
   const activities = useMemo(() => {
     if (!jobDetail?.activities) return [];
-    return jobDetail.activities.slice(0, 6).map(activity => ({
+    return jobDetail.activities.slice(0, 10).map(activity => ({
       name: activity.name.length > 30 ? activity.name.substring(0, 30) + '...' : activity.name,
       value: Math.round(activity.value),
     }));
   }, [jobDetail]);
 
-  // Abilities
-  const abilities = jobDetail?.abilities?.slice(0, 6) || [];
+  // Abilities - get 10
+  const abilities = jobDetail?.abilities?.slice(0, 10) || [];
 
-  // Knowledge
-  const knowledge = jobDetail?.knowledge?.slice(0, 4) || [];
+  // Knowledge - get 10 (increased from 6)
+  const knowledge = jobDetail?.knowledge?.slice(0, 10) || [];
 
   if (loading) {
     return (
@@ -234,10 +237,17 @@ const JobDetail = () => {
             </CardHeader>
             <CardContent>
               {jobSkills.length > 0 ? (
-                <HorizontalBarChart
-                  data={jobSkills}
-                  formatValue={(v) => `${Math.round(v)}%`}
-                />
+                <>
+                  <HorizontalBarChart
+                    data={jobSkills}
+                    formatValue={(v) => `${Math.round(v)}%`}
+                    primaryLabel="Importance"
+                    maxValue={100} // ADD THIS LINE
+                  />
+                  <div className="text-xs text-muted-foreground mt-2 text-center">
+                    Showing {jobSkills.length} skills
+                  </div>
+                </>
               ) : (
                 <div className="text-muted-foreground text-center py-8">
                   No skills data available
@@ -283,10 +293,13 @@ const JobDetail = () => {
                       );
                     })}
                   </div>
+                  <div className="text-xs text-muted-foreground mt-2 text-right">
+                    {techSkills.length} tech skills
+                  </div>
 
                   {softSkills.length > 0 && (
                     <div className="mt-6">
-                      <h4 className="text-sm font-medium mb-3">Soft Skills</h4>
+                      <h4 className="text-sm font-medium mb-3">Soft Skills (from top skills)</h4>
                       <div className="flex flex-wrap gap-2">
                         {softSkills.map((skill) => {
                           const skillId = getSkillId(skill.name);
@@ -301,10 +314,16 @@ const JobDetail = () => {
                                 className="px-3 py-2 text-sm hover:bg-secondary/40 cursor-pointer transition-colors"
                               >
                                 {skill.name}
+                                <span className="ml-1 text-xs text-muted-foreground">
+                                  {Math.round(skill.value)}%
+                                </span>
                               </Badge>
                             </Link>
                           );
                         })}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-2 text-right">
+                        {softSkills.length} soft skills
                       </div>
                     </div>
                   )}
@@ -330,10 +349,17 @@ const JobDetail = () => {
             </CardHeader>
             <CardContent>
               {activities.length > 0 ? (
-                <HorizontalBarChart
-                  data={activities}
-                  formatValue={(v) => `${Math.round(v)}%`}
-                />
+                <>
+                  <HorizontalBarChart
+                    data={activities}
+                    formatValue={(v) => `${Math.round(v)}%`}
+                    primaryLabel="Importance"
+                    maxValue={100} // ADD THIS LINE
+                  />
+                  <div className="text-xs text-muted-foreground mt-2 text-center">
+                    Showing {activities.length} activities
+                  </div>
+                </>
               ) : (
                 <div className="text-muted-foreground text-center py-8">
                   No activities data available
@@ -352,29 +378,34 @@ const JobDetail = () => {
             </CardHeader>
             <CardContent>
               {abilities.length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {abilities.map((ability) => {
-                    const skillId = getSkillId(ability.name);
-                    return (
-                      <Link 
-                        key={ability.name} 
-                        to={`/skills/${skillId}`}
-                        className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
-                      >
-                        <p className="font-medium text-sm group-hover:text-cyan transition-colors">
-                          {ability.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{ability.category}</p>
-                        <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
-                          <div 
-                            className="bg-cyan rounded-full h-1" 
-                            style={{ width: `${ability.value}%` }}
-                          />
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
+                <>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {abilities.map((ability) => {
+                      const skillId = getSkillId(ability.name);
+                      return (
+                        <Link 
+                          key={ability.name} 
+                          to={`/skills/${skillId}`}
+                          className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
+                        >
+                          <p className="font-medium text-sm group-hover:text-cyan transition-colors">
+                            {ability.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{ability.category}</p>
+                          <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
+                            <div 
+                              className="bg-cyan rounded-full h-1" 
+                              style={{ width: `${ability.value}%` }}
+                            />
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 text-right">
+                    {abilities.length} abilities
+                  </div>
+                </>
               ) : (
                 <div className="text-muted-foreground text-center py-8">
                   No abilities data available
@@ -400,6 +431,9 @@ const JobDetail = () => {
                         </Link>
                       );
                     })}
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 text-right">
+                    {knowledge.length} knowledge areas
                   </div>
                 </div>
               )}
@@ -441,6 +475,9 @@ const JobDetail = () => {
                   );
                 })}
               </div>
+              <div className="text-xs text-muted-foreground mt-2 text-right">
+                {jobDetail.tools.length} tools
+              </div>
             </CardContent>
           </Card>
         )}
@@ -457,11 +494,16 @@ const JobDetail = () => {
                 <p><span className="font-bold">Job Title:</span> {jobDetail.occ_title}</p>
                 <p><span className="font-bold">SOC Code:</span> {jobDetail.basic_info.soc_code || 'N/A'}</p>
                 <p><span className="font-bold">Skills Count:</span> {jobDetail.skills.length}</p>
+                <p><span className="font-bold">Skills (first 3):</span> {jobDetail.skills.slice(0,3).map(s => s.name).join(', ')}</p>
+                <p><span className="font-bold">Skills Values:</span> {jobDetail.skills.slice(0,3).map(s => Math.round(s.value)).join('%, ')}%</p>
                 <p><span className="font-bold">Tech Skills:</span> {jobDetail.tech_skills.length}</p>
-                <p><span className="font-bold">Soft Skills:</span> {jobDetail.soft_skills.length}</p>
-                <p><span className="font-bold">Activities:</span> {jobDetail.activities.length}</p>
+                <p><span className="font-bold">Soft Skills (from skills list):</span> {jobDetail.soft_skills.length}</p>
+                <p><span className="font-bold">Activities Count:</span> {jobDetail.activities.length}</p>
+                <p><span className="font-bold">Activities (first 3):</span> {jobDetail.activities.slice(0,3).map(a => a.name).join(', ')}</p>
+                <p><span className="font-bold">Activities Values:</span> {jobDetail.activities.slice(0,3).map(a => Math.round(a.value)).join('%, ')}%</p>
                 <p><span className="font-bold">Abilities:</span> {jobDetail.abilities.length}</p>
                 <p><span className="font-bold">Knowledge:</span> {jobDetail.knowledge.length}</p>
+                <p><span className="font-bold">Knowledge (first 3):</span> {jobDetail.knowledge.slice(0,3).map(k => k.name).join(', ')}</p>
                 <p><span className="font-bold">Tools:</span> {jobDetail.tools.length}</p>
                 <p><span className="font-bold">Has Education:</span> {jobDetail.education ? 'Yes' : 'No'}</p>
               </div>

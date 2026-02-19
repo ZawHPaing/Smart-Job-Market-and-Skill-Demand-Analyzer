@@ -28,7 +28,6 @@ async def search_skills(
     repo = SkillRepo(neo4j_driver)
     
     async with neo4j_driver.session() as session:
-        # Fixed: Use named parameter 'search_term' instead of 'query'
         result = await session.run(
             """
             MATCH (s:Skill)
@@ -39,7 +38,7 @@ async def search_skills(
             ORDER BY job_count DESC
             LIMIT $limit
             """,
-            search_term=q,  # Changed from 'query' to 'search_term'
+            search_term=q,
             limit=limit
         )
         
