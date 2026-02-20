@@ -70,10 +70,10 @@ class JobDetailRepo:
     # OPTIMIZED BLS DATA METHODS - MATCHING JOBSREPO
     # -------------------------
     
-    async def get_job_by_occ_code(self, occ_code: str, year: int = 2024) -> Optional[Dict[str, Any]]:
+    async def get_job_by_occ_code(self, occ_code: str, year: int) -> Optional[Dict[str, Any]]:
         """
         Get basic job info using MAX tot_emp approach - matches JobsRepo.top_jobs()
-        Single aggregation for maximum performance.
+        Year is required to match specific year data.
         """
         pipeline = [
             {
@@ -508,7 +508,8 @@ class JobDetailRepo:
             "basic_info": {
                 "occ_code": occ_code,
                 "occ_title": basic_info.get("occ_title", "") if basic_info else "",
-                "soc_code": onet_soc
+                "soc_code": onet_soc,
+                "year": year
             },
             "metrics": [],
             "skills": [],

@@ -416,22 +416,16 @@ class SkillRepo:
                     "demand_trend": 0,
                     "salary_association": 0
                 })
-                
-                # Debug print for tech skills
-                if skill_type == 'tech':
-                    print(f"🔧 Tech skill found: {name}, hot_technology: {hot_technology}, in_demand: {in_demand}")
-            
-            # Remove any remaining duplicates just in case (by name)
-            unique_skills = []
-            seen_names = set()
-            for skill in skills:
-                if skill["name"] not in seen_names:
-                    seen_names.add(skill["name"])
-                    unique_skills.append(skill)
-            
-            print(f"Returning {len(unique_skills)} unique skills with co_occurrence_rate calculated using target job count: {total_target_jobs}")
-            print(f"Tech skills with flags: {len([s for s in unique_skills if s['type'] == 'tech' and (s['hot_technology'] or s['in_demand'])])}")
-            return unique_skills[:limit]
+        
+        # Remove any remaining duplicates just in case (by name)
+        unique_skills = []
+        seen_names = set()
+        for skill in skills:
+            if skill["name"] not in seen_names:
+                seen_names.add(skill["name"])
+                unique_skills.append(skill)
+        
+        return unique_skills[:limit]
     
     # -------------------------
     # Get Top Jobs Requiring Skill - FIXED with proper flags

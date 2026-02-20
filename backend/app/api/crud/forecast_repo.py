@@ -3,11 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
-from prophet import Prophet
 import logging
-
-logging.getLogger('prophet').setLevel(logging.WARNING)
-logging.getLogger('cmdstanpy').setLevel(logging.WARNING)
 
 
 def _to_float(v: Any) -> float:
@@ -24,7 +20,7 @@ def _to_float(v: Any) -> float:
 
 class ForecastRepo:
     """
-    Enhanced forecast repository with backtesting and model selection
+    Enhanced forecast repository with backtesting and accuracy metrics
     """
     
     def __init__(self, db):
@@ -187,62 +183,98 @@ class ForecastRepo:
         
         return forecasts
     
-    def _evaluate_model(self, train: List[float], test: List[float], forecast: List[float]) -> float:
-        """Calculate Mean Absolute Percentage Error (MAPE)"""
-        if len(test) == 0 or len(forecast) == 0:
-            return 999
+    def _calculate_accuracy_metrics(self, actual: List[float], predicted: List[float]) -> Dict[str, float]:
+        """Calculate multiple accuracy metrics"""
+        if len(actual) == 0 or len(predicted) == 0:
+            return {
+                "mape": 999,
+                "rmse": 999,
+                "mae": 999,
+                "mpe": 999
+            }
         
         errors = []
-        for i in range(min(len(test), len(forecast))):
-            if test[i] > 0:
-                errors.append(abs(forecast[i] - test[i]) / test[i])
+        percentage_errors = []
         
-        return np.mean(errors) if errors else 999
+        for i in range(min(len(actual), len(predicted))):
+            if actual[i] > 0:
+                error = predicted[i] - actual[i]
+                errors.append(error)
+                percentage_errors.append(abs(error) / actual[i])
+        
+        if not errors:
+            return {
+                "mape": 999,
+                "rmse": 999,
+                "mae": 999,
+                "mpe": 999
+            }
+        
+        # Calculate metrics
+        mape = np.mean(percentage_errors) * 100  # Mean Absolute Percentage Error
+        rmse = np.sqrt(np.mean([e**2 for e in errors]))  # Root Mean Square Error
+        mae = np.mean([abs(e) for e in errors])  # Mean Absolute Error
+        mpe = np.mean(errors) / np.mean(actual) * 100  # Mean Percentage Error (signed)
+        
+        return {
+            "mape": round(mape, 2),
+            "rmse": round(rmse),
+            "mae": round(mae),
+            "mpe": round(mpe, 2)
+        }
+    
+    def _backtest_model(self, values: List[float], years: List[int], test_size: int = 3) -> Dict[str, Any]:
+        """Backtest the simple forecast model on historical data"""
+        if len(values) <= test_size:
+            return {
+                "accuracy_metrics": {
+                    "mape": 999,
+                    "rmse": 999,
+                    "mae": 999,
+                    "mpe": 999
+                },
+                "test_period": [],
+                "predicted": []
+            }
+        
+        # Split data into training and testing
+        train_values = values[:-test_size]
+        test_values = values[-test_size:]
+        train_years = years[:len(train_values)]
+        test_years = years[-test_size:]
+        
+        # Generate predictions for test period
+        predictions = self._simple_forecast(train_values, len(test_values))
+        
+        # Calculate accuracy metrics
+        metrics = self._calculate_accuracy_metrics(test_values, predictions)
+        
+        # Prepare comparison data
+        comparison = []
+        for i in range(len(test_years)):
+            if i < len(predictions):
+                comparison.append({
+                    "year": test_years[i],
+                    "actual": round(test_values[i]),
+                    "predicted": round(predictions[i]),
+                    "error": round(predictions[i] - test_values[i]),
+                    "error_pct": round(((predictions[i] - test_values[i]) / test_values[i]) * 100, 1) if test_values[i] > 0 else 0
+                })
+        
+        return {
+            "accuracy_metrics": metrics,
+            "test_period": test_years,
+            "predictions": [round(p, 0) for p in predictions],
+            "actuals": [round(v, 0) for v in test_values],
+            "comparison": comparison
+        }
     
     # ==========================================================
     # CORE FORECASTING
     # ==========================================================
     
-    def _run_prophet(self, years: List[int], values: List[float], horizon: int) -> List[float]:
-        """Run Prophet with logistic growth and COVID regressor"""
-        try:
-            df = pd.DataFrame({
-                'ds': pd.to_datetime([f"{y}-01-01" for y in years]),
-                'y': values,
-            })
-            
-            # Logistic growth cap (30% above max historical)
-            cap_value = max(values) * 1.3
-            df['cap'] = cap_value
-            
-            # COVID structural break regressor (2020-2021)
-            df['covid'] = df['ds'].dt.year.isin([2020, 2021]).astype(int)
-            
-            model = Prophet(
-                growth='logistic',
-                yearly_seasonality=False,
-                weekly_seasonality=False,
-                daily_seasonality=False,
-                changepoint_prior_scale=0.05,
-                seasonality_mode='additive'
-            )
-            
-            model.add_regressor('covid')
-            model.fit(df, iter=1000)  # Reduce iterations to speed up
-            
-            future = model.make_future_dataframe(periods=horizon, freq='Y')
-            future['cap'] = cap_value
-            future['covid'] = future['ds'].dt.year.isin([2020, 2021]).astype(int)
-            
-            forecast = model.predict(future)
-            return forecast.tail(horizon)['yhat'].tolist()
-            
-        except Exception as e:
-            print(f"⚠️ Prophet failed: {e}, falling back to simple forecast")
-            return self._simple_forecast(values, horizon)
-    
-    async def forecast_industry(self, naics: str, title: str, data: List[Dict], forecast_year: int) -> Optional[Dict]:
-        """Forecast a single industry with model selection via backtesting"""
+    async def forecast_industry(self, naics: str, title: str, data: List[Dict], forecast_year: int, verbose: bool = False) -> Optional[Dict]:
+        """Forecast a single industry with backtesting and accuracy metrics"""
         
         if len(data) < 3:  # Need at least 3 years of data
             print(f"⚠️ Insufficient data for {title}: {len(data)} years")
@@ -254,38 +286,11 @@ class ForecastRepo:
         
         horizon = forecast_year - 2024
         
-        # If we have enough data for backtesting (at least 4 years)
-        if len(values) >= 4:
-            # Backtest: train on all but last 3 years, test on last 3
-            train_values = values[:-3] if len(values) > 3 else values
-            test_values = values[-3:] if len(values) > 3 else []
-            
-            if len(train_values) >= 2 and len(test_values) > 0:
-                train_years = years[:len(train_values)]
-                
-                # Get forecasts from both models for backtest period
-                prophet_forecast = self._run_prophet(train_years, train_values, len(test_values))
-                simple_forecast = self._simple_forecast(train_values, len(test_values))
-                
-                # Evaluate which model performed better
-                prophet_error = self._evaluate_model(train_values, test_values, prophet_forecast)
-                simple_error = self._evaluate_model(train_values, test_values, simple_forecast)
-                
-                print(f"\n📊 Model Evaluation for {title}:")
-                print(f"  Prophet MAPE: {prophet_error:.2%}")
-                print(f"  Simple MAPE: {simple_error:.2%}")
-                print(f"  Using: {'Prophet' if prophet_error <= simple_error else 'Simple'}")
-                
-                # Choose better model for final forecast
-                if prophet_error <= simple_error:
-                    final_forecast = self._run_prophet(years, values, horizon)
-                else:
-                    final_forecast = self._simple_forecast(values, horizon)
-            else:
-                final_forecast = self._simple_forecast(values, horizon)
-        else:
-            # Not enough data for backtesting, use simple forecast
-            final_forecast = self._simple_forecast(values, horizon)
+        # Run backtest to evaluate model accuracy
+        backtest_results = self._backtest_model(values, years, test_size=min(3, len(values) // 3))
+        
+        # Generate final forecast
+        final_forecast = self._simple_forecast(values, horizon)
         
         current_2024 = values[-1]
         final_value = final_forecast[-1] if final_forecast else current_2024
@@ -305,16 +310,28 @@ class ForecastRepo:
             else:
                 forecast_dict[f"forecast_{year}"] = 0
         
+        if verbose:
+            print(f"\n📊 Backtest Results for {title}:")
+            print(f"  MAPE: {backtest_results['accuracy_metrics']['mape']}%")
+            print(f"  RMSE: {backtest_results['accuracy_metrics']['rmse']}")
+            print(f"  MPE: {backtest_results['accuracy_metrics']['mpe']}%")
+            if backtest_results['comparison']:
+                print("  Period-by-period:")
+                for comp in backtest_results['comparison']:
+                    print(f"    {comp['year']}: Actual={comp['actual']}, Predicted={comp['predicted']}, Error={comp['error_pct']}%")
+        
         return {
             "industry": title,
             "naics": naics,
             "current": round(current_2024),
             **forecast_dict,
-            "growth_rate": round(cagr, 2)
+            "growth_rate": round(cagr, 2),
+            "backtest_metrics": backtest_results["accuracy_metrics"],
+            "backtest_comparison": backtest_results["comparison"]
         }
     
-    async def forecast_job(self, occ_code: str, title: str, forecast_year: int) -> Optional[Dict]:
-        """Forecast a single job (simplified version)"""
+    async def forecast_job(self, occ_code: str, title: str, forecast_year: int, verbose: bool = False) -> Optional[Dict]:
+        """Forecast a single job with backtesting"""
         # Get time series data
         pipeline = [
             {
@@ -347,10 +364,14 @@ class ForecastRepo:
         if len(data) < 3:
             return None
         
+        years = [d["year"] for d in data]
         values = [d["employment"] for d in data]
         horizon = forecast_year - 2024
         
-        # Use simple forecast for jobs (can be enhanced later)
+        # Run backtest
+        backtest_results = self._backtest_model(values, years, test_size=min(3, len(values) // 3))
+        
+        # Generate forecast
         forecast_vals = self._simple_forecast(values, horizon)
         current_2024 = next((d["employment"] for d in data if d["year"] == 2024), values[-1])
         
@@ -368,42 +389,55 @@ class ForecastRepo:
             else:
                 forecast_dict[f"forecast_{year}"] = 0
         
+        if verbose:
+            print(f"\n📊 Backtest Results for {title}:")
+            print(f"  MAPE: {backtest_results['accuracy_metrics']['mape']}%")
+        
         return {
             "title": title,
             "occ_code": occ_code,
             "current": round(current_2024),
             **forecast_dict,
-            "growth_rate": round(growth_rate, 2)
+            "growth_rate": round(growth_rate, 2),
+            "backtest_metrics": backtest_results["accuracy_metrics"]
         }
     
     # ==========================================================
     # MAIN ENTRY
     # ==========================================================
     
-    async def get_complete_forecast(self, forecast_year: int) -> Dict[str, Any]:
-        """Get complete forecast - with model selection and backtesting"""
+    async def get_complete_forecast(self, forecast_year: int, verbose: bool = False) -> Dict[str, Any]:
+        """Get complete forecast with accuracy metrics"""
         
         print(f"\n🔮 Generating forecast for {forecast_year}...")
         
         # Get top industries - with deduplication
         top_industries = await self.get_top_industries(10)
         
-        print(f"\n🔍 DEBUG - Top Industries for {forecast_year} (deduplicated):")
+        print(f"\n🔍 Top Industries for {forecast_year} (deduplicated):")
         for ind in top_industries:
             print(f"  {ind['title']}: {ind['employment_2024']}")
         
         # Get forecasts for each industry
         industry_forecasts = []
+        industry_backtest_summary = []
+        
         for ind in top_industries:
             data = await self.get_industry_time_series(ind["naics"])
             forecast = await self.forecast_industry(
                 ind["naics"], 
                 ind["title"], 
                 data, 
-                forecast_year
+                forecast_year,
+                verbose=verbose
             )
             if forecast:
                 industry_forecasts.append(forecast)
+                industry_backtest_summary.append({
+                    "industry": ind["title"],
+                    "mape": forecast["backtest_metrics"]["mape"],
+                    "mpe": forecast["backtest_metrics"]["mpe"]
+                })
         
         # Get top jobs - with deduplication
         top_jobs = await self.get_top_jobs(8)
@@ -414,7 +448,8 @@ class ForecastRepo:
             forecast = await self.forecast_job(
                 job["occ_code"], 
                 job["title"], 
-                forecast_year
+                forecast_year,
+                verbose=verbose
             )
             if forecast:
                 job_forecasts.append(forecast)
@@ -429,19 +464,17 @@ class ForecastRepo:
                 "forecast": ind.get(forecast_key, 0)
             })
         
-        # Prepare employment forecast time series (2011-forecast_year)
+        # Prepare employment forecast time series
         employment_forecast = []
         
-        # Include historical years from 2011-2024
+        # Historical years 2011-2024
         for year in range(2011, 2025):
             row = {"year": year}
             for ind in industry_forecasts:
-                # For historical years, we need actual data - using approximate values
-                # In production, this should come from the actual time series
                 row[ind["industry"]] = ind["current"] * (1 - 0.02 * (2024 - year))
             employment_forecast.append(row)
         
-        # Add forecast years
+        # Forecast years
         for year in range(2025, forecast_year + 1):
             row = {"year": year}
             forecast_key = f"forecast_{year}"
@@ -462,13 +495,12 @@ class ForecastRepo:
         # Sort by growth
         top_jobs_forecast.sort(key=lambda x: x["growth"], reverse=True)
         
-        # Prepare industry details (top 10)
+        # Prepare industry details
         industry_details = []
         for ind in industry_forecasts[:10]:
             forecast_key = f"forecast_{forecast_year}"
             forecast_val = ind.get(forecast_key, 0)
             
-            # Calculate simple percentage change (not CAGR for display)
             change = ((forecast_val - ind["current"]) / ind["current"]) * 100 if ind["current"] > 0 else 0
             
             industry_details.append({
@@ -476,26 +508,34 @@ class ForecastRepo:
                 "current": ind["current"],
                 "forecast": forecast_val,
                 "change": round(change, 1),
-                "confidence": "High" if forecast_year <= 2026 else "Medium"
+                "confidence": "High" if forecast_year <= 2026 else "Medium",
+                "mape": ind["backtest_metrics"]["mape"]
             })
         
-        # Calculate totals (using top 10)
+        # Calculate totals
         total_current = sum(ind["current"] for ind in industry_forecasts[:10])
         total_forecast = sum(ind.get(f"forecast_{forecast_year}", 0) for ind in industry_forecasts[:10])
         
-        # Calculate total growth rate (CAGR)
         years_diff = forecast_year - 2024
         if years_diff > 0 and total_current > 0 and total_forecast > 0:
             total_growth = ((total_forecast / total_current) ** (1 / years_diff) - 1) * 100
         else:
             total_growth = 0
         
-        print(f"\n🔍 DEBUG - Totals:")
+        # Calculate average backtest accuracy
+        avg_mape = np.mean([bt["mape"] for bt in industry_backtest_summary]) if industry_backtest_summary else 0
+        
+        print(f"\n📊 Overall Backtest Summary:")
+        print(f"  Average MAPE across industries: {avg_mape:.2f}%")
+        print(f"  Best performing: {min(industry_backtest_summary, key=lambda x: x['mape'])['industry'] if industry_backtest_summary else 'N/A'}")
+        print(f"  Worst performing: {max(industry_backtest_summary, key=lambda x: x['mape'])['industry'] if industry_backtest_summary else 'N/A'}")
+        
+        print(f"\n🔍 Totals:")
         print(f"  total_current: {total_current}")
         print(f"  total_forecast: {total_forecast}")
         print(f"  total_growth: {total_growth:.2f}%")
         
-        # AI jobs estimate (simplified)
+        # AI jobs estimate
         ai_jobs = [j for j in job_forecasts if any(term in j["title"].lower() 
                   for term in ["ai", "machine learning", "data scientist", "ml"])]
         ai_forecast = sum(j.get(f"forecast_{forecast_year}", 0) for j in ai_jobs) if ai_jobs else 48000
@@ -533,9 +573,6 @@ class ForecastRepo:
             }
         ]
         
-        print(f"\n🔍 DEBUG - Metrics value being sent:")
-        print(f"  Est. Total Employment value: {metrics[0]['value']}")
-        
         return {
             "forecast_year": forecast_year,
             "metrics": metrics,
@@ -543,6 +580,10 @@ class ForecastRepo:
             "employment_forecast": employment_forecast,
             "top_jobs_forecast": top_jobs_forecast[:8],
             "industry_details": industry_details,
+            "backtest_summary": {
+                "average_mape": round(avg_mape, 2),
+                "industry_metrics": industry_backtest_summary
+            },
             "confidence_level": "High" if forecast_year <= 2026 else "Medium",
-            "disclaimer": "Projections based on historical trends (2011-2024). Prophet model with backtesting and COVID adjustment."
+            "disclaimer": f"Projections based on historical trends (2011-2024). Average backtest MAPE: {avg_mape:.1f}%. Simple growth model used."
         }

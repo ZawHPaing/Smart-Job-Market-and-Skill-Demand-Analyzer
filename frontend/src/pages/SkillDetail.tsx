@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Code, Briefcase, TrendingUp, Users } from 'lucide-react';
-import { DashboardLayout } from '@/components/layout';
+import { ChevronLeft, Code, Briefcase, TrendingUp, Users, Calendar } from 'lucide-react';
+import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { DonutChart, SkillNetworkGraph } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -15,6 +15,7 @@ const fmtNumber = (n: number) => n.toLocaleString();
 
 const SkillDetail = () => {
   const { id } = useParams<{ id: string }>();
+  const { year } = useYear();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [skillDetail, setSkillDetail] = useState<SkillDetailResponse | null>(null);
@@ -33,8 +34,8 @@ const SkillDetail = () => {
       setError(null);
 
       try {
-        console.log('🔍 Fetching skill detail for ID:', id);
-        const data = await SkillsAPI.getDetail(id);
+        console.log(`🔍 Fetching skill detail for ID: ${id} with year: ${year}`);
+        const data = await SkillsAPI.getDetail(id, year);
         if (cancelled) return;
         console.log('✅ Skill detail received:', data);
         setSkillDetail(data);
@@ -50,7 +51,7 @@ const SkillDetail = () => {
 
     loadSkillDetail();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, year]);
 
   // Debug effect to log co-occurring skills data
   useEffect(() => {
@@ -58,42 +59,12 @@ const SkillDetail = () => {
       console.log('=== SKILL DETAIL DEBUG ===');
       console.log('Skill name:', skillDetail.basic_info.skill_name);
       console.log('Skill type:', skillDetail.basic_info.skill_type);
+      console.log('Year:', skillDetail.year);
       console.log('Total jobs count:', skillDetail.total_jobs_count);
       console.log('Usage percentage:', skillDetail.usage_percentage);
       
       console.log('\n📊 CO-OCCURRING SKILLS:');
       console.log('Array length:', skillDetail.co_occurring_skills?.length || 0);
-      
-      if (skillDetail.co_occurring_skills && skillDetail.co_occurring_skills.length > 0) {
-        console.log('First 5 co-occurring skills:');
-        skillDetail.co_occurring_skills.slice(0, 5).forEach((skill, index) => {
-          console.log(`  ${index + 1}. ${skill.name}:`, {
-            id: skill.id,
-            type: skill.type,
-            frequency: skill.frequency,
-            usage_count: skill.usage_count,
-            co_occurrence_rate: skill.co_occurrence_rate,
-            avg_importance: skill.avg_importance,
-            avg_level: skill.avg_level,
-            hot_technology: skill.hot_technology,
-            in_demand: skill.in_demand
-          });
-        });
-        
-        // Check for skills with co_occurrence_rate > 0
-        const withRates = skillDetail.co_occurring_skills.filter(s => s.co_occurrence_rate && s.co_occurrence_rate > 0);
-        console.log(`\n✅ Skills with co_occurrence_rate > 0: ${withRates.length}/${skillDetail.co_occurring_skills.length}`);
-        
-        // Check tech flags in co-occurring skills
-        const techSkills = skillDetail.co_occurring_skills.filter(s => s.type === 'tech');
-        console.log('🔧 Tech skills in co-occurring:', techSkills.map(s => ({
-          name: s.name,
-          hot_technology: s.hot_technology,
-          in_demand: s.in_demand
-        })));
-      } else {
-        console.log('⚠️ No co-occurring skills found!');
-      }
       
       console.log('\n📈 METRICS:');
       console.log(skillDetail.metrics);
@@ -186,25 +157,12 @@ const SkillDetail = () => {
   // Get top co-occurring skills for "What to Learn Next"
   const nextSkills = useMemo(() => {
     if (!skillDetail?.co_occurring_skills) {
-      console.log('No co-occurring skills to sort');
       return [];
     }
     
-    console.log('Sorting co-occurring skills for "What to Learn Next"');
     const sorted = [...skillDetail.co_occurring_skills]
       .sort((a, b) => (b.co_occurrence_rate || 0) - (a.co_occurrence_rate || 0))
       .slice(0, 4);
-    
-    console.log('Top 4 skills:', sorted.map(s => ({
-      name: s.name,
-      type: s.type,
-      rate: s.co_occurrence_rate,
-      usage: s.usage_count,
-      hot_technology: s.hot_technology,
-      in_demand: s.in_demand,
-      avg_importance: s.avg_importance,
-      avg_level: s.avg_level
-    })));
     
     return sorted;
   }, [skillDetail]);
@@ -215,7 +173,7 @@ const SkillDetail = () => {
         <div className="flex flex-col items-center justify-center h-64 space-y-4">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan"></div>
           <div className="text-muted-foreground">Loading skill details...</div>
-          <div className="text-xs text-muted-foreground">Skill ID: {id}</div>
+          <div className="text-xs text-muted-foreground">Skill ID: {id} (Year: {year})</div>
         </div>
       </DashboardLayout>
     );
@@ -272,10 +230,17 @@ const SkillDetail = () => {
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple to-coral">
               <Code className="h-6 w-6 text-background" />
             </div>
-            <div>
-              <h1 className="font-display text-3xl font-bold tracking-tight">
-                {skillDetail.basic_info.skill_name}
-              </h1>
+            <div className="flex-1">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h1 className="font-display text-3xl font-bold tracking-tight">
+                  {skillDetail.basic_info.skill_name}
+                </h1>
+                {/* Year badge */}
+                <Badge variant="outline" className="bg-cyan/10 text-cyan border-cyan/20">
+                  <Calendar className="h-3 w-3 mr-1" />
+                  {skillDetail.year || year} Data
+                </Badge>
+              </div>
               <div className="flex items-center gap-2 mt-1">
                 <Badge variant="outline" className="text-xs">
                   {skillDetail.basic_info.skill_type.replace('_', ' ').toUpperCase()}
@@ -447,12 +412,6 @@ const SkillDetail = () => {
                             📈 In Demand
                           </Badge>
                         ) : null}
-                        {/* Debug info - remove in production */}
-                        {process.env.NODE_ENV === 'development' && (
-                          <div className="text-xs text-muted-foreground mt-1 w-full">
-                            (hot: {skill.hot_technology ? 'yes' : 'no'}, demand: {skill.in_demand ? 'yes' : 'no'})
-                          </div>
-                        )}
                         {/* If neither flag is true, show a placeholder to maintain height consistency */}
                         {!skill.hot_technology && !skill.in_demand && (
                           <div className="h-5"></div>
@@ -509,7 +468,7 @@ const SkillDetail = () => {
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
-                title="Top Jobs Using This Skill"
+                title={`Top Jobs Using This Skill (${skillDetail.year || year})`}
                 subtitle="Roles where this skill is most important"
               />
             </CardHeader>
@@ -534,6 +493,21 @@ const SkillDetail = () => {
                           </>
                         )}
                       </div>
+                      {/* Show salary if available for the selected year */}
+                      {job.median_salary ? (
+                        <div className="text-sm mt-1">
+                          <span className="text-cyan font-medium">
+                            ${(job.median_salary / 1000).toFixed(0)}K
+                          </span>
+                          <span className="text-xs text-muted-foreground ml-1">
+                            ({skillDetail.year || year})
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground mt-1">
+                          Salary data unavailable for {skillDetail.year || year}
+                        </div>
+                      )}
                       {/* Show tech flags for jobs if they exist */}
                       {(job.hot_technology || job.in_demand) && (
                         <div className="flex flex-wrap gap-1 mt-1">
@@ -550,11 +524,6 @@ const SkillDetail = () => {
                         </div>
                       )}
                     </div>
-                    {job.median_salary && (
-                      <span className="text-cyan font-medium ml-2">
-                        ${(job.median_salary / 1000).toFixed(0)}K
-                      </span>
-                    )}
                   </Link>
                 ))}
               </div>
@@ -578,6 +547,9 @@ const SkillDetail = () => {
                 </p>
                 <p className="text-xs">
                   <span className="font-bold">Type:</span> {skillDetail.basic_info.skill_type}
+                </p>
+                <p className="text-xs">
+                  <span className="font-bold">Year:</span> {skillDetail.year || year}
                 </p>
                 <p className="text-xs">
                   <span className="font-bold">Co-occurring Skills:</span> {skillDetail.co_occurring_skills.length}

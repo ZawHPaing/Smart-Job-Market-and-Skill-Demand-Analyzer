@@ -32,7 +32,6 @@ export type CoOccurringSkill = {
   co_occurrence_rate?: number;
   demand_trend?: number;
   salary_association?: number;
-  // All fields properly defined
   usage_count?: number;
   avg_importance?: number;
   avg_level?: number;
@@ -49,6 +48,7 @@ export type JobRequiringSkill = {
   employment?: number;
   hot_technology?: boolean;
   in_demand?: boolean;
+  // No salary_year_note field
 };
 
 export type NetworkNode = {
@@ -83,6 +83,7 @@ export type SkillDetailResponse = {
   top_jobs: JobRequiringSkill[];
   total_jobs_count: number;
   network_graph?: NetworkGraph;
+  year?: number;
 };
 
 export type SkillSearchResult = {
@@ -93,17 +94,19 @@ export type SkillSearchResult = {
 };
 
 export const SkillsAPI = {
-  // Get complete skill details
-  getDetail: (skillId: string) =>
-    apiGet<SkillDetailResponse>(`/skills/${encodeURIComponent(skillId)}`),
+  // Get complete skill details with required year
+  getDetail: (skillId: string, year: number) => {
+    return apiGet<SkillDetailResponse>(`/skills/${encodeURIComponent(skillId)}`, { year });
+  },
 
   // Search skills
   search: (query: string, limit = 10) =>
     apiGet<SkillSearchResult[]>("/skills/search", { q: query, limit }),
 
-  // Get top jobs for skill
-  getJobs: (skillId: string, limit = 10) =>
-    apiGet<JobRequiringSkill[]>(`/skills/${encodeURIComponent(skillId)}/jobs`, { limit }),
+  // Get top jobs for skill with required year
+  getJobs: (skillId: string, year: number, limit = 10) => {
+    return apiGet<JobRequiringSkill[]>(`/skills/${encodeURIComponent(skillId)}/jobs`, { year, limit });
+  },
 
   // Get co-occurring skills
   getCoOccurring: (skillId: string, limit = 6) =>
