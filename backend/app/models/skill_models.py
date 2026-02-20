@@ -27,7 +27,6 @@ class SkillUsageData(BaseModel):
     color: str
 
 
-# UPDATED: Added all new fields
 class CoOccurringSkill(BaseModel):
     id: str
     name: str
@@ -36,7 +35,6 @@ class CoOccurringSkill(BaseModel):
     co_occurrence_rate: Optional[float] = None
     demand_trend: Optional[float] = 0
     salary_association: Optional[float] = 0
-    # NEW FIELDS - make sure these are included
     usage_count: Optional[int] = None
     avg_importance: Optional[float] = None
     avg_level: Optional[float] = None
@@ -53,6 +51,7 @@ class JobRequiringSkill(BaseModel):
     employment: Optional[float] = None
     hot_technology: Optional[bool] = False
     in_demand: Optional[bool] = False
+    # No salary_year_note field - just like industries
 
 
 class NetworkNode(BaseModel):
@@ -87,3 +86,4 @@ class SkillDetailResponse(BaseModel):
     top_jobs: List[JobRequiringSkill]
     total_jobs_count: int
     network_graph: Optional[NetworkGraph] = None
+    year: Optional[int] = None

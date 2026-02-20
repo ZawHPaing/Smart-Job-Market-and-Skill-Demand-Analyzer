@@ -179,12 +179,16 @@ export default function Home() {
       try {
         setLoading(true);
 
+        // Always start from 2011 for complete historical data
+        const yearFrom = 2011;
+
         // Fetch all data in parallel
         const [mRes, listRes, topRes, trendsRes, topJobsRes] = await Promise.all([
           fetch(`${API_BASE}/industries/metrics/${year}`),
           fetch(`${API_BASE}/industries/?year=${year}&limit=1000`),
           fetch(`${API_BASE}/industries/top?year=${year}&limit=20&by=employment`),
-          fetch(`${API_BASE}/industries/top-trends?year_from=2019&year_to=${year}&limit=10`), // Explicitly set limit=10
+          // Request trends from 2011 to current year
+          fetch(`${API_BASE}/industries/top-trends?year_from=${yearFrom}&year_to=${year}&limit=10`),
           fetch(`${API_BASE}/jobs/top?year=${year}&limit=10&by=employment`),
         ]);
 
@@ -227,10 +231,11 @@ export default function Home() {
         setTopJobs(topJobItems);
 
         // ---- trends aligned to top 10 industries ----
-        const aligned = await buildTrendAligned(topItems, series, 2019, year);
+        const aligned = await buildTrendAligned(topItems, series, yearFrom, year);
         if (!cancelled) {
           setTrendData(aligned.data);
           setTrendLines(aligned.lines);
+          console.log(`📊 Home trends loaded from ${yearFrom} to ${year} (${aligned.data.length} years)`);
         }
 
         // ---- unique job titles (based on top industries, deduped) ----
@@ -426,6 +431,7 @@ export default function Home() {
                   data={donutData} 
                   height={450} 
                   topListCount={10}
+                  context="industry"
                 />
               )}
             </CardContent>
@@ -458,7 +464,7 @@ export default function Home() {
           <CardHeader>
             <SectionHeader
               title="Employment per Industry Over Time"
-              subtitle="Top 10 industries by employment (time series)"
+              subtitle={`Top 10 industries by employment (2011-${year} time series)`}
               action={{ label: "View Trends", href: "/industries" }}
             />
           </CardHeader>
@@ -466,13 +472,18 @@ export default function Home() {
             {trend.data.length === 0 || trend.lines.length === 0 ? (
               <div className="text-muted-foreground">No trend data available</div>
             ) : (
-              <MultiLineChart 
-                data={trend.data} 
-                xAxisKey="year" 
-                lines={trend.lines} 
-                height={400}
-                maxLines={10}
-              />
+              <>
+                <div className="mb-2 text-xs text-muted-foreground text-center">
+                  Showing {trend.data.length} years of historical data ({trend.data[0]?.year} - {trend.data[trend.data.length-1]?.year})
+                </div>
+                <MultiLineChart 
+                  data={trend.data} 
+                  xAxisKey="year" 
+                  lines={trend.lines} 
+                  height={400}
+                  maxLines={10}
+                />
+              </>
             )}
           </CardContent>
         </Card>

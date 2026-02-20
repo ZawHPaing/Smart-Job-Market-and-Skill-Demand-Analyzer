@@ -21,6 +21,7 @@ interface HorizontalBarChartProps {
   secondaryLabel?: string;
   formatValue?: (value: number) => string;
   formatSecondary?: (value: number) => string;
+  maxValue?: number; // ADD THIS LINE
 }
 
 const COLORS = [
@@ -67,8 +68,13 @@ export function HorizontalBarChart({
   secondaryLabel = "Salary",
   formatValue = (v) => v.toLocaleString(),
   formatSecondary = (v) => `$${(v / 1000).toFixed(0)}K`,
+  maxValue, // ADD THIS LINE
 }: HorizontalBarChartProps) {
-  const maxValue = Math.max(...data.map((d) => d.value));
+  // REPLACE THIS LINE:
+  // const maxValue = Math.max(...data.map((d) => d.value));
+  
+  // WITH THESE LINES:
+  const calculatedMaxValue = maxValue !== undefined ? maxValue : Math.max(...data.map((d) => d.value));
 
   return (
     <div className="space-y-3">
@@ -96,7 +102,10 @@ export function HorizontalBarChart({
             <div
               className="absolute inset-y-0 left-0 rounded-lg transition-all duration-700 ease-out group-hover:opacity-90"
               style={{
-                width: `${(item.value / maxValue) * 100}%`,
+                // REPLACE THIS LINE:
+                // width: `${(item.value / maxValue) * 100}%`,
+                // WITH THIS LINE:
+                width: `${(item.value / calculatedMaxValue) * 100}%`,
                 background: `linear-gradient(90deg, ${COLORS[index % COLORS.length]}, ${
                   COLORS[index % COLORS.length]
                 }80)`,

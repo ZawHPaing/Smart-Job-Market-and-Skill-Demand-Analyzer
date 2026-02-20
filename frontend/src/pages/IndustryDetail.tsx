@@ -91,9 +91,15 @@ const IndustryDetail = () => {
         name: job.occ_title,
         value: job.employment,
         secondaryValue: job.median_salary ?? 0,
+        occ_code: job.occ_code, // Store the occ_code for routing
       })),
     [topJobs]
   );
+
+  // Helper function to format job code for URL
+  const formatJobCode = (code: string) => {
+    return encodeURIComponent(code);
+  };
 
   return (
     <DashboardLayout>
@@ -130,12 +136,35 @@ const IndustryDetail = () => {
               {loading ? (
                 <div className="text-muted-foreground">Loading...</div>
               ) : jobChartData.length > 0 ? (
-                <HorizontalBarChart
-                  data={jobChartData}
-                  showSecondary
-                  primaryLabel="Employment"
-                  secondaryLabel="Median Salary"
-                />
+                <div className="space-y-2">
+                  {jobChartData.map((job) => (
+                    <Link
+                      key={job.occ_code}
+                      to={`/jobs/${formatJobCode(job.occ_code)}`}
+                      className="block group"
+                    >
+                      <div className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-medium group-hover:text-cyan transition-colors">
+                            {job.name}
+                          </span>
+                          <span className="text-cyan font-medium">
+                            ${Math.round(job.secondaryValue / 1000)}K
+                          </span>
+                        </div>
+                        <div className="relative h-8 w-full bg-secondary/50 rounded overflow-hidden">
+                          <div 
+                            className="absolute left-0 top-0 h-full bg-cyan/30"
+                            style={{ width: `${Math.min(100, (job.value / jobChartData[0].value) * 100)}%` }}
+                          />
+                          <div className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-medium text-foreground">
+                            {job.value.toLocaleString()} employed
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
               ) : (
                 <div className="flex h-[200px] items-center justify-center text-muted-foreground">
                   No job data available for this industry
@@ -175,8 +204,9 @@ const IndustryDetail = () => {
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {allJobs.slice(0, 18).map((job) => (
-                  <div
+                  <Link
                     key={`${job.occ_code}-${job.occ_title}`}
+                    to={`/jobs/${formatJobCode(job.occ_code)}`}
                     className="group flex items-center justify-between p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
                   >
                     <div>
@@ -192,12 +222,30 @@ const IndustryDetail = () => {
                         ${((job.median_salary ?? 0) / 1000).toFixed(0)}K
                       </p>
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
           </CardContent>
         </Card>
+
+        {/* Job Detail Routes Info - Helpful for debugging */}
+        {process.env.NODE_ENV === 'development' && (
+          <Card className="glass-card border-amber/30">
+            <CardHeader>
+              <SectionHeader title="Debug Info" subtitle="Job Detail Routes" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs mb-2">Clicking any job above will navigate to:</p>
+              <code className="text-xs block p-2 bg-secondary/30 rounded">
+                /jobs/[occ_code]
+              </code>
+              <p className="text-xs mt-2 text-muted-foreground">
+                Example: Software Developers → /jobs/15-1252
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </DashboardLayout>
   );

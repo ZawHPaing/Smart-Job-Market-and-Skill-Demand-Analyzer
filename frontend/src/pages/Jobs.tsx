@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, ArrowUpDown } from 'lucide-react';
 
-import { DashboardLayout } from '@/components/layout';
+import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { HorizontalBarChart, MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -40,7 +40,17 @@ const fmtM = (n: number) => {
   return n.toString();
 };
 
-// Chart colors array
+const fmtMoney = (n: number) => {
+  if (n >= 1000) {
+    return `$${Math.round(n / 1000)}K`;
+  }
+  return `$${n}`;
+};
+
+const fmtMSafe = (n: any) => (Number.isFinite(Number(n)) ? fmtM(Number(n)) : "0M");
+const fmtMoneySafe = (n: any) => (Number.isFinite(Number(n)) ? fmtMoney(Number(n)) : "$0");
+
+// Chart colors array (extended for 10+ items)
 const CHART_COLORS = [
   'hsl(186 100% 50%)',  // cyan
   'hsl(0 100% 71%)',    // coral
@@ -52,7 +62,10 @@ const CHART_COLORS = [
   'hsl(80 70% 50%)',    // lime
   'hsl(280 80% 70%)',   // lavender
   'hsl(30 100% 65%)',   // orange
+  'hsl(190 90% 55%)',   // teal
+  'hsl(120 60% 50%)',   // forest green
 ];
+const pickColor = (i: number) => CHART_COLORS[i % CHART_COLORS.length];
 
 type SortBy = 'employment' | 'salary';
 
@@ -74,12 +87,15 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 const Jobs = () => {
+  const { year } = useYear(); // Get year from context like Industries page
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
   const [currentPage, setCurrentPage] = useState(1);
-  const [year] = useState(2024);
   const [sortBy, setSortBy] = useState<SortBy>('employment');
   const [activeChart, setActiveChart] = useState<'employment' | 'salary'>('employment');
+  const [showMore, setShowMore] = useState(false);
+  const [allPage, setAllPage] = useState(1);
+  const ALL_PAGE_SIZE = 24;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -94,153 +110,197 @@ const Jobs = () => {
   // Cache for API responses
   const apiCache = useRef<Map<string, any>>(new Map());
 
-useEffect(() => {
-  let cancelled = false;
+  // Reset page when search changes
+  useEffect(() => {
+    setAllPage(1);
+  }, [searchInput, showMore]);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    let cancelled = false;
 
-    try {
-      console.log('Fetching jobs data for sortBy:', sortBy);
-      
-      const cacheKey = `jobs-${year}-${sortBy}`;
-      
-      // Check cache first
-      if (apiCache.current.has(cacheKey)) {
-        console.log('Using cached data for', cacheKey);
-        const cached = apiCache.current.get(cacheKey);
-        if (!cancelled) {
-          setMetrics(cached.metrics);
-          setTopJobs(cached.topJobs);
-          setEmploymentTrendData(cached.employmentTrendData);
-          setSalaryTrendData(cached.salaryTrendData);
-          setChartLines(cached.chartLines);
-          setAllJobs(cached.allJobs);
-          setLoading(false);
-        }
-        return;
-      }
-      
-      // Load data in parallel
-      const [m, topJobsData, employmentTrends, salaryTrends, jobsList] = await Promise.all([
-        JobsAPI.dashboardMetrics(year),
-        JobsAPI.top(year, 10, sortBy),
-        JobsAPI.topTrends(2011, year, 10, undefined, sortBy),
-        JobsAPI.topSalaryTrends(2011, year, 10, undefined, sortBy),
-        JobsAPI.list({ year, limit: 1000 }),
-      ]);
+    async function load() {
+      setLoading(true);
+      setError(null);
 
-      if (cancelled) return;
-
-      console.log('Data loaded for sortBy:', sortBy);
-      console.log('Top jobs:', topJobsData);
-      console.log('Employment trends:', employmentTrends);
-      console.log('Salary trends:', salaryTrends);
-
-      setMetrics(m);
-      setTopJobs(topJobsData.jobs);
-
-      // Generate chart lines from top jobs
-      const lines = topJobsData.jobs.slice(0, 10).map((job, index) => ({
-        key: job.occ_code,
-        name: job.occ_title.length > 20 
-          ? job.occ_title.substring(0, 20) + '...' 
-          : job.occ_title,
-        color: CHART_COLORS[index % CHART_COLORS.length],
-      }));
-      setChartLines(lines);
-
-      // Process employment trends
-      let employmentRows: any[] = [];
-      if (employmentTrends?.series?.length) {
-        const years = new Set<number>();
-        employmentTrends.series.forEach((s: any) => {
-          s.points.forEach((p: any) => years.add(p.year));
-        });
+      try {
+        console.log('Fetching jobs data for year:', year, 'sortBy:', sortBy);
         
-        const sortedYears = Array.from(years).sort((a, b) => a - b);
-        employmentRows = sortedYears.map(year => {
-          const row: any = { year };
-          employmentTrends.series.forEach((series: any) => {
-            const point = series.points.find((p: any) => p.year === year);
-            row[series.occ_code] = point ? point.employment : 0;
-          });
-          return row;
-        });
-        setEmploymentTrendData(employmentRows);
-      }
-
-      // Process salary trends
-      let salaryRows: any[] = [];
-      if (salaryTrends?.series?.length) {
-        const years = new Set<number>();
-        salaryTrends.series.forEach((s: any) => {
-          s.points.forEach((p: any) => years.add(p.year));
-        });
+        const cacheKey = `jobs-${year}-${sortBy}`;
         
-        const sortedYears = Array.from(years).sort((a, b) => a - b);
-        salaryRows = sortedYears.map(year => {
-          const row: any = { year };
-          salaryTrends.series.forEach((series: any) => {
-            const point = series.points.find((p: any) => p.year === year);
-            row[series.occ_code] = point ? point.salary : 0;
-          });
-          return row;
-        });
-        setSalaryTrendData(salaryRows);
-      }
-
-      // Sort all jobs by the current sort criteria
-      const sortedJobs = [...jobsList.jobs].sort((a, b) => {
-        if (sortBy === 'employment') {
-          return b.total_employment - a.total_employment;
-        } else {
-          const aSalary = a.a_median || 0;
-          const bSalary = b.a_median || 0;
-          return bSalary - aSalary;
+        // Check cache first
+        if (apiCache.current.has(cacheKey)) {
+          console.log('Using cached data for', cacheKey);
+          const cached = apiCache.current.get(cacheKey);
+          if (!cancelled) {
+            setMetrics(cached.metrics);
+            setTopJobs(cached.topJobs);
+            setEmploymentTrendData(cached.employmentTrendData);
+            setSalaryTrendData(cached.salaryTrendData);
+            setChartLines(cached.chartLines);
+            setAllJobs(cached.allJobs);
+            setLoading(false);
+          }
+          return;
         }
-      });
-      setAllJobs(sortedJobs);
-      
-      // Cache the results with properly defined variables
-      apiCache.current.set(cacheKey, {
-        metrics: m,
-        topJobs: topJobsData.jobs,
-        employmentTrendData: employmentRows,
-        salaryTrendData: salaryRows,
-        chartLines: lines,
-        allJobs: sortedJobs
-      });
+        
+        // Load data in parallel - always start from 2011 for complete history
+        const yearFrom = 2011;
+        
+        const [m, topJobsData, employmentTrends, salaryTrends, jobsList] = await Promise.all([
+          JobsAPI.dashboardMetrics(year),
+          JobsAPI.top(year, 10, sortBy),
+          JobsAPI.topTrends(yearFrom, year, 10, undefined, sortBy),
+          JobsAPI.topSalaryTrends(yearFrom, year, 10, undefined, sortBy),
+          JobsAPI.list({ year, limit: 1000 }),
+        ]);
 
-    } catch (e: any) {
-      if (cancelled) return;
-      setError(e?.message || 'Failed to load jobs data');
-      console.error('Jobs loading error:', e);
-    } finally {
-      if (cancelled) return;
-      setLoading(false);
+        if (cancelled) return;
+
+        console.log('Data loaded for year:', year, 'sortBy:', sortBy);
+        console.log('Employment trends years:', employmentTrends?.series?.[0]?.points?.map((p: any) => p.year));
+        console.log('Salary trends years:', salaryTrends?.series?.[0]?.points?.map((p: any) => p.year));
+
+        setMetrics(m);
+        setTopJobs(topJobsData.jobs);
+
+        // Generate chart lines from top jobs
+        const lines = topJobsData.jobs.slice(0, 10).map((job, index) => ({
+          key: job.occ_code,
+          name: job.occ_title.length > 20 
+            ? job.occ_title.substring(0, 20) + '...' 
+            : job.occ_title,
+          color: pickColor(index),
+        }));
+        setChartLines(lines);
+
+        // Process employment trends - align with top jobs
+        const topCodes = topJobsData.jobs.map((j: JobCard) => j.occ_code);
+        
+        let employmentRows: any[] = [];
+        if (employmentTrends?.series?.length) {
+          // Build map of series by occ_code
+          const seriesByCode = new Map(
+            employmentTrends.series.map((s: any) => [s.occ_code, s])
+          );
+          
+          // Collect all years
+          const years = new Set<number>();
+          employmentTrends.series.forEach((s: any) => {
+            s.points.forEach((p: any) => years.add(p.year));
+          });
+          
+          const sortedYears = Array.from(years).sort((a, b) => a - b);
+          console.log(`Employment trends: ${sortedYears.length} years (${sortedYears[0]}-${sortedYears[sortedYears.length-1]})`);
+          
+          employmentRows = sortedYears.map(year => {
+            const row: any = { year };
+            topCodes.forEach(code => {
+              const series = seriesByCode.get(code);
+              const point = series?.points?.find((p: any) => p.year === year);
+              row[code] = point ? point.employment : 0;
+            });
+            return row;
+          });
+          setEmploymentTrendData(employmentRows);
+        }
+
+        // Process salary trends - align with top jobs
+        let salaryRows: any[] = [];
+        if (salaryTrends?.series?.length) {
+          // Build map of series by occ_code
+          const seriesByCode = new Map(
+            salaryTrends.series.map((s: any) => [s.occ_code, s])
+          );
+          
+          // Collect all years
+          const years = new Set<number>();
+          salaryTrends.series.forEach((s: any) => {
+            s.points.forEach((p: any) => years.add(p.year));
+          });
+          
+          const sortedYears = Array.from(years).sort((a, b) => a - b);
+          console.log(`Salary trends: ${sortedYears.length} years (${sortedYears[0]}-${sortedYears[sortedYears.length-1]})`);
+          
+          salaryRows = sortedYears.map(year => {
+            const row: any = { year };
+            topCodes.forEach(code => {
+              const series = seriesByCode.get(code);
+              const point = series?.points?.find((p: any) => p.year === year);
+              row[code] = point ? point.salary : 0;
+            });
+            return row;
+          });
+          setSalaryTrendData(salaryRows);
+        }
+
+        // Sort all jobs by the current sort criteria
+        const sortedJobs = [...jobsList.jobs].sort((a, b) => {
+          if (sortBy === 'employment') {
+            return b.total_employment - a.total_employment;
+          } else {
+            const aSalary = a.a_median || 0;
+            const bSalary = b.a_median || 0;
+            return bSalary - aSalary;
+          }
+        });
+        setAllJobs(sortedJobs);
+        
+        // Cache the results
+        apiCache.current.set(cacheKey, {
+          metrics: m,
+          topJobs: topJobsData.jobs,
+          employmentTrendData: employmentRows,
+          salaryTrendData: salaryRows,
+          chartLines: lines,
+          allJobs: sortedJobs
+        });
+
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message || 'Failed to load jobs data');
+        console.error('Jobs loading error:', e);
+      } finally {
+        if (cancelled) return;
+        setLoading(false);
+      }
     }
-  }
 
-  load();
-  return () => {
-    cancelled = true;
-  };
-}, [year, sortBy]);
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [year, sortBy]);
 
   // Filter jobs based on debounced search - memoized
   const filteredJobs = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return allJobs.slice(0, 30);
+    if (!q) return allJobs;
     
     return allJobs
       .filter((job) =>
         job.occ_title.toLowerCase().includes(q) ||
         job.occ_code.includes(q)
-      )
-      .slice(0, 30);
+      );
   }, [allJobs, debouncedSearch]);
+
+  // Separate top jobs from the rest for "Show more" functionality
+  const topJobsSet = useMemo(() => {
+    return new Set((topJobs || []).map(j => j.occ_code));
+  }, [topJobs]);
+
+  const filteredJobsNoTop = useMemo(() => {
+    return filteredJobs.filter(job => !topJobsSet.has(job.occ_code));
+  }, [filteredJobs, topJobsSet]);
+
+  const totalAllPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredJobsNoTop.length / ALL_PAGE_SIZE)),
+    [filteredJobsNoTop.length]
+  );
+
+  const pagedJobs = useMemo(() => {
+    const start = (allPage - 1) * ALL_PAGE_SIZE;
+    return filteredJobsNoTop.slice(start, start + ALL_PAGE_SIZE);
+  }, [filteredJobsNoTop, allPage]);
 
   // Format top jobs for horizontal bar chart - memoized
   const chartData = useMemo(() => {
@@ -279,7 +339,7 @@ useEffect(() => {
         color: 'green' as const,
       },
       {
-        title: 'Mean Salary',
+        title: 'Mean Salary (est.)',
         value: Math.round(metrics.a_median * 1.15),
         prefix: '$',
         trend: { value: 3.2, direction: 'up' as const },
@@ -297,15 +357,10 @@ useEffect(() => {
     ];
   }, [metrics]);
 
-  // Handle load more
-  const handleLoadMore = useCallback(() => {
-    setCurrentPage(p => p + 1);
-  }, []);
-
   // Handle sort change
   const handleSortChange = useCallback((newSort: SortBy) => {
     setSortBy(newSort);
-    setCurrentPage(1);
+    setAllPage(1);
   }, []);
 
   // Show loading state
@@ -313,7 +368,7 @@ useEffect(() => {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="text-muted-foreground">Loading jobs data...</div>
+          <div className="text-muted-foreground">Loading jobs data for {year}...</div>
         </div>
       </DashboardLayout>
     );
@@ -345,8 +400,9 @@ useEffect(() => {
               Jobs <span className="gradient-text">Dashboard</span>
             </h1>
             <p className="mt-1 text-muted-foreground">
-              Explore job titles, salaries, and employment trends
+              Explore job titles, salaries, and employment trends (Year: {year})
             </p>
+            {error && <p className="mt-2 text-sm text-coral">{error}</p>}
           </div>
           <div className="relative w-full max-w-xs">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -422,13 +478,19 @@ useEffect(() => {
                 
                 <TabsContent value="employment">
                   {employmentTrendData.length > 0 && chartLines.length > 0 ? (
-                    <MultiLineChart
-                      data={employmentTrendData}
-                      xAxisKey="year"
-                      lines={chartLines}
-                      height={300}
-                      maxLines={10}
-                    />
+                    <>
+                      <div className="mb-2 text-xs text-muted-foreground text-center">
+                        Showing {employmentTrendData.length} years of historical data 
+                        ({employmentTrendData[0]?.year} - {employmentTrendData[employmentTrendData.length-1]?.year})
+                      </div>
+                      <MultiLineChart
+                        data={employmentTrendData}
+                        xAxisKey="year"
+                        lines={chartLines}
+                        height={300}
+                        maxLines={10}
+                      />
+                    </>
                   ) : (
                     <div className="text-muted-foreground text-center py-8">
                       No employment trend data available
@@ -438,13 +500,19 @@ useEffect(() => {
                 
                 <TabsContent value="salary">
                   {salaryTrendData.length > 0 && chartLines.length > 0 ? (
-                    <MultiLineChart
-                      data={salaryTrendData}
-                      xAxisKey="year"
-                      lines={chartLines}
-                      height={300}
-                      maxLines={10}
-                    />
+                    <>
+                      <div className="mb-2 text-xs text-muted-foreground text-center">
+                        Showing {salaryTrendData.length} years of historical data 
+                        ({salaryTrendData[0]?.year} - {salaryTrendData[salaryTrendData.length-1]?.year})
+                      </div>
+                      <MultiLineChart
+                        data={salaryTrendData}
+                        xAxisKey="year"
+                        lines={chartLines}
+                        height={300}
+                        maxLines={10}
+                      />
+                    </>
                   ) : (
                     <div className="text-muted-foreground text-center py-8">
                       No salary trend data available
@@ -458,60 +526,125 @@ useEffect(() => {
 
         {/* Job Listings Grid */}
         <Card className="glass-card">
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader className="flex flex-row items-center justify-between gap-4">
             <SectionHeader
               title="All Job Titles"
               subtitle={`Showing ${filteredJobs.length} of ${allJobs.length} jobs`}
             />
+            <Button variant="secondary" onClick={() => setShowMore((v) => !v)}>
+              {showMore ? "Hide" : "See more"}
+            </Button>
           </CardHeader>
           <CardContent>
-            {filteredJobs.length > 0 ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredJobs.map((job) => (
-                  <Link
-                    key={job.occ_code}
-                    to={`/jobs/${encodeURIComponent(job.occ_code)}`}
-                    className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
-                  >
-                    <div className="space-y-1">
-                      <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
-                        {job.occ_title}
-                      </p>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>{fmtM(job.total_employment)} employed</span>
-                        <span>•</span>
-                        <span className="text-xs">{job.occ_code}</span>
+            {/* Top Jobs Section (always visible) */}
+            {filteredJobs.filter(job => topJobsSet.has(job.occ_code)).length > 0 && (
+              <>
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">Top Jobs</h3>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-6">
+                  {filteredJobs
+                    .filter(job => topJobsSet.has(job.occ_code))
+                    .map((job) => (
+                      <Link
+                        key={job.occ_code}
+                        to={`/jobs/${encodeURIComponent(job.occ_code)}`}
+                        className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
+                      >
+                        <div className="space-y-1">
+                          <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
+                            {job.occ_title}
+                          </p>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <span>{fmtM(job.total_employment)} employed</span>
+                            <span>•</span>
+                            <span className="text-xs">{job.occ_code}</span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-semibold text-cyan">
+                            ${job.a_median ? fmtK(job.a_median) : 'N/A'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            median salary
+                          </p>
+                        </div>
+                      </Link>
+                    ))}
+                </div>
+              </>
+            )}
+
+            {/* Show More Section */}
+            {showMore && (
+              <>
+                {filteredJobsNoTop.length > 0 && (
+                  <>
+                    <h3 className="text-sm font-medium text-muted-foreground mb-3">All Jobs</h3>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {pagedJobs.map((job) => (
+                        <Link
+                          key={job.occ_code}
+                          to={`/jobs/${encodeURIComponent(job.occ_code)}`}
+                          className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
+                        >
+                          <div className="space-y-1">
+                            <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
+                              {job.occ_title}
+                            </p>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <span>{fmtMSafe(job.total_employment)} employed</span>
+                              <span>•</span>
+                              <span className="text-xs">{job.occ_code}</span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-semibold text-cyan">
+                              {fmtMoneySafe(job.a_median)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              median salary
+                            </p>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+
+                    {/* Pagination Controls */}
+                    {totalAllPages > 1 && (
+                      <div className="mt-6 flex items-center justify-between">
+                        <p className="text-sm text-muted-foreground">
+                          Page {allPage} of {totalAllPages}
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="secondary"
+                            disabled={allPage <= 1}
+                            onClick={() => setAllPage((p) => Math.max(1, p - 1))}
+                          >
+                            Prev
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            disabled={allPage >= totalAllPages}
+                            onClick={() => setAllPage((p) => Math.min(totalAllPages, p + 1))}
+                          >
+                            Next
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-semibold text-cyan">
-                        ${job.a_median ? fmtK(job.a_median) : 'N/A'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        median salary
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            ) : (
+                    )}
+                  </>
+                )}
+              </>
+            )}
+            
+            {/* No Results Message */}
+            {filteredJobs.length === 0 && (
               <div className="text-center py-12 text-muted-foreground">
                 {searchInput ? (
                   <>No jobs found matching "{searchInput}"</>
                 ) : (
                   <>No jobs data available</>
                 )}
-              </div>
-            )}
-            
-            {filteredJobs.length === 30 && allJobs.length > 30 && (
-              <div className="mt-6 text-center">
-                <Button 
-                  variant="outline" 
-                  onClick={handleLoadMore}
-                >
-                  Load More Jobs
-                </Button>
               </div>
             )}
           </CardContent>

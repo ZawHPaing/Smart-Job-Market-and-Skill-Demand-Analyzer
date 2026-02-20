@@ -52,7 +52,7 @@ function normalizeOccLegend(legend: any[]): { key: string; name: string }[] {
 }
 
 // ---- Trends: exclude Cross-industry and dedupe by title ----
-function normalizeTrendSeries(rawSeries: any[], takeN = 10) {  // Changed from 6 to 10
+function normalizeTrendSeries(rawSeries: any[], takeN = 10) {
   const series = Array.isArray(rawSeries) ? rawSeries : [];
 
   const isCross = (s: any) => String(s?.naics_title || "").toLowerCase().includes("cross-industry");
@@ -101,15 +101,15 @@ export default function Industries() {
       setError(null);
 
       try {
-        const yearFrom = Math.max(2019, year - 5);
+        // Always start from 2011 for complete historical data
+        const yearFrom = 2011;
 
         const [m, list, top, trends] = await Promise.all([
           IndustriesAPI.dashboardMetrics(year),
           IndustriesAPI.top(year, 1000, "employment"),
-          IndustriesAPI.top(year, 10, "employment"),  // Changed from 6 to 10
-
-          // ✅ Request 10 trends
-          IndustriesAPI.topTrends(yearFrom, year, 10),  // Changed from 3/6 to 10
+          IndustriesAPI.top(year, 10, "employment"),
+          // Request trends from 2011 to current year
+          IndustriesAPI.topTrends(yearFrom, year, 10),
         ]);
 
         if (cancelled) return;
@@ -118,7 +118,7 @@ export default function Industries() {
         setAllIndustries(list.industries || []);
         setTopIndustries(top.industries);
 
-        // ✅ Align trends to the same Top 10 industries shown in cards
+        // Align trends to the same Top 10 industries shown in cards
         const topList = top.industries || [];
         const topNaics = topList.map((i: any) => String(i.naics || "").trim()).filter(Boolean);
         const topTitleByNaics = new Map(
@@ -175,6 +175,8 @@ export default function Industries() {
         }
 
         const sortedYears = Array.from(years).sort((a, b) => a - b);
+        console.log(`📊 Loading trend data from ${sortedYears[0]} to ${sortedYears[sortedYears.length - 1]} (${sortedYears.length} years)`);
+
         const rows = sortedYears.map((y) => {
           const row: any = { year: y };
           for (const naics of topNaics) {
@@ -328,7 +330,7 @@ export default function Industries() {
           <CardHeader className="flex flex-row items-center justify-between gap-4">
             <SectionHeader 
               title="Top Industries" 
-              subtitle="Top 10 industries by total employment"  // Updated subtitle
+              subtitle="Top 10 industries by total employment"
             />
             <Button variant="secondary" onClick={() => setShowMore((v) => !v)}>
               {showMore ? "Hide" : "See more"}
@@ -428,14 +430,27 @@ export default function Industries() {
           <CardHeader>
             <SectionHeader 
               title="Employment per Industry Over Time" 
-              subtitle="Top 10 industries by employment (time series)"  // Updated subtitle
+              subtitle={`Top 10 industries by employment (2011-${year} time series)`}
             />
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="text-muted-foreground">Loading...</div>
+            ) : trendRows.length === 0 ? (
+              <div className="text-muted-foreground text-center py-8">No trend data available</div>
             ) : (
-              <MultiLineChart data={trendRows} xAxisKey="year" lines={trendLines} height={400}  maxLines={10} />
+              <>
+                <div className="mb-2 text-xs text-muted-foreground text-center">
+                  Showing {trendRows.length} years of historical data ({trendRows[0]?.year} - {trendRows[trendRows.length-1]?.year})
+                </div>
+                <MultiLineChart 
+                  data={trendRows} 
+                  xAxisKey="year" 
+                  lines={trendLines} 
+                  height={400}  
+                  maxLines={10} 
+                />
+              </>
             )}
           </CardContent>
         </Card>
