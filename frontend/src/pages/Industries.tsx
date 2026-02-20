@@ -115,7 +115,7 @@ export default function Industries() {
         if (cancelled) return;
 
         setMetrics(m);
-        setAllIndustries(list.industries || list.items || list.industries || []);
+        setAllIndustries(list.industries || []);
         setTopIndustries(top.industries);
 
         // ✅ Align trends to the same Top 10 industries shown in cards
