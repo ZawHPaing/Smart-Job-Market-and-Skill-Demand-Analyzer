@@ -122,7 +122,7 @@ const IndustryDetail = () => {
           {error ? <p className="mt-2 text-sm text-red-500">{error}</p> : null}
         </div>
 
-        <MetricsGrid metrics={metrics} />
+        <MetricsGrid metrics={metrics} showTrend={false} />
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card className="glass-card">

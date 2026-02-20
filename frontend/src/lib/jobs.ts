@@ -58,6 +58,7 @@ export type JobDashboardMetrics = {
   avg_job_growth_pct: number;
   top_growing_job: TopGrowingJob | null;
   a_median: number;
+  mean_salary: number;
 };
 
 export type JobCard = {

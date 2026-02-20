@@ -33,6 +33,17 @@ class SalaryRepo:
         }
 
     @staticmethod
+    def _to_float(v: Any) -> float:
+        if v is None:
+            return 0.0
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            return float(str(v).replace(",", ""))
+        except Exception:
+            return 0.0
+
+    @staticmethod
     def _not_cross_industry_match() -> Dict[str, Any]:
         # excludes titles containing "Cross-industry" (case-insensitive)
         return {"naics_title": {"$not": {"$regex": "Cross-industry", "$options": "i"}}}
@@ -44,27 +55,21 @@ class SalaryRepo:
         prev_year = year - 1
 
         async def read_cross_allocc(y: int) -> Dict[str, Any]:
-            pipeline = [
+            doc = await self.col.find_one(
                 {
-                    "$match": {
-                        "year": y,
-                        "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
-                        "occ_title": "All Occupations",
-                    }
+                    "year": y,
+                    "naics": "000000",
+                    "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
+                    "occ_title": "All Occupations",
                 },
-                {
-                    "$group": {
-                        "_id": None,
-                        "totalEmployment": {"$max": self._num("tot_emp")},
-                        "medianSalary": {"$max": self._num("a_median")},
-                    }
-                },
-                {"$project": {"_id": 0, "totalEmployment": 1, "medianSalary": 1}},
-            ]
-            rows = await self.col.aggregate(pipeline).to_list(1)
-            if not rows:
+                {"_id": 0, "tot_emp": 1, "a_median": 1},
+            )
+            if not doc:
                 return {"totalEmployment": 0, "medianSalary": 0}
-            return rows[0]
+            return {
+                "totalEmployment": int(self._to_float(doc.get("tot_emp", 0))),
+                "medianSalary": int(self._to_float(doc.get("a_median", 0))),
+            }
 
         cur = await read_cross_allocc(year)
         prev = await read_cross_allocc(prev_year) if prev_year >= 0 else {"totalEmployment": 0, "medianSalary": 0}
@@ -540,3 +545,7 @@ class SalaryRepo:
                 }
             )
         return series
+
+
+
+

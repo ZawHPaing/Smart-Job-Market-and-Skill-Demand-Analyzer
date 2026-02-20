@@ -249,45 +249,18 @@ class IndustryRepo:
         If o_group exists, prefers o_group=total.
         """
         # Cross-industry totals drive overall employment + median salary.
-        cross_pipeline = [
+        cross_doc = await self.db["bls_oews"].find_one(
             {
-                "$match": {
-                    "year": int(year),
-                    "occ_code": "00-0000",
-                    "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
-                }
+                "year": int(year),
+                "naics": "000000",
+                "occ_code": "00-0000",
+                "occ_title": "All Occupations",
+                "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
             },
-            {
-                "$group": {
-                    "_id": None,
-                    "total_emp": {
-                        "$max": {
-                            "$convert": {
-                                "input": "$tot_emp",
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0,
-                            }
-                        }
-                    },
-                    "median_salary": {
-                        "$max": {
-                            "$convert": {
-                                "input": "$a_median",
-                                "to": "double",
-                                "onError": 0,
-                                "onNull": 0,
-                            }
-                        }
-                    },
-                }
-            },
-            {"$project": {"_id": 0, "total_emp": 1, "median_salary": 1}},
-        ]
-        cross_rows = await self.db["bls_oews"].aggregate(cross_pipeline).to_list(length=1)
-        cross_doc = cross_rows[0] if cross_rows else {}
-        cross_total_employment = _to_float(cross_doc.get("total_emp"))
-        cross_median_salary = _to_float(cross_doc.get("median_salary"))
+            {"_id": 0, "tot_emp": 1, "a_median": 1},
+        ) or {}
+        cross_total_employment = _to_float(cross_doc.get("tot_emp"))
+        cross_median_salary = _to_float(cross_doc.get("a_median"))
 
         cursor = self.db["bls_oews"].find(
             {"year": int(year), "occ_code": "00-0000"},

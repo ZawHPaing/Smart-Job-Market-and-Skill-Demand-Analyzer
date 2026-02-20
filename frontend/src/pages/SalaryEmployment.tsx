@@ -345,7 +345,7 @@ export default function SalaryEmployment() {
           </div>
         </div>
 
-        <MetricsGrid metrics={metrics} />
+        <MetricsGrid metrics={metrics} showTrend={false} />
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as "industries" | "jobs")} className="space-y-6">
           <TabsList className="bg-secondary/50">
@@ -619,3 +619,4 @@ export default function SalaryEmployment() {
     </DashboardLayout>
   );
 }
+

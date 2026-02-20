@@ -322,37 +322,29 @@ const Jobs = () => {
       {
         title: 'Total Employment',
         value: metrics.total_employment,
-        trend: { value: Math.abs(metrics.avg_job_growth_pct), direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
         color: 'cyan' as const,
-        format: fmtM,
       },
       {
         title: 'Unique Job Titles',
         value: metrics.total_jobs,
-        trend: { value: Math.abs(metrics.avg_job_growth_pct), direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
         color: 'purple' as const,
       },
       {
-        title: 'Job Market Trend',
-        value: `${metrics.avg_job_growth_pct >= 0 ? '+' : ''}${metrics.avg_job_growth_pct}%`,
-        trend: { value: Math.abs(metrics.avg_job_growth_pct), direction: metrics.avg_job_growth_pct >= 0 ? 'up' as const : 'down' as const },
+        title: 'Avg Job Growth',
+        value: metrics.avg_job_growth_pct,
         color: 'green' as const,
       },
       {
-        title: 'Mean Salary (est.)',
-        value: Math.round(metrics.a_median * 1.15),
+        title: 'Mean Salary',
+        value: metrics.mean_salary,
         prefix: '$',
-        trend: { value: 3.2, direction: 'up' as const },
         color: 'coral' as const,
-        format: fmtK,
       },
       {
         title: 'Median Salary',
         value: metrics.a_median,
         prefix: '$',
-        trend: { value: 2.8, direction: 'up' as const },
         color: 'amber' as const,
-        format: fmtK,
       },
     ];
   }, [metrics]);
@@ -417,7 +409,7 @@ const Jobs = () => {
         </div>
 
         {/* Key Metrics */}
-        <MetricsGrid metrics={dashboardMetrics} />
+        <MetricsGrid metrics={dashboardMetrics} showTrend={false} />
 
         {/* Charts */}
         <div className="grid gap-6 lg:grid-cols-2">

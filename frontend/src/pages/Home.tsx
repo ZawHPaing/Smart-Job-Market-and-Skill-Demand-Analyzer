@@ -183,13 +183,14 @@ export default function Home() {
         const yearFrom = 2011;
 
         // Fetch all data in parallel
-        const [mRes, listRes, topRes, trendsRes, topJobsRes] = await Promise.all([
+        const [mRes, listRes, topRes, trendsRes, topJobsRes, jobsMetricsRes] = await Promise.all([
           fetch(`${API_BASE}/industries/metrics/${year}`),
           fetch(`${API_BASE}/industries/?year=${year}&limit=1000`),
           fetch(`${API_BASE}/industries/top?year=${year}&limit=20&by=employment`),
           // Request trends from 2011 to current year
           fetch(`${API_BASE}/industries/top-trends?year_from=${yearFrom}&year_to=${year}&limit=10`),
           fetch(`${API_BASE}/jobs/top?year=${year}&limit=10&by=employment`),
+          fetch(`${API_BASE}/jobs/metrics/${year}`),
         ]);
 
         // If any response isn't ok, throw so we don't silently build empty charts
@@ -198,12 +199,14 @@ export default function Home() {
         if (!topRes.ok) throw new Error(`top industries failed: ${topRes.status}`);
         if (!trendsRes.ok) throw new Error(`top trends failed: ${trendsRes.status}`);
         if (!topJobsRes.ok) throw new Error(`top jobs failed: ${topJobsRes.status}`);
+        if (!jobsMetricsRes.ok) throw new Error(`jobs metrics failed: ${jobsMetricsRes.status}`);
 
         const mJson = await mRes.json();
         const listJson = await listRes.json();
         const topJson = await topRes.json();
         const trendsJson = await trendsRes.json();
         const topJobsJson = await topJobsRes.json();
+        const jobsMetricsJson = await jobsMetricsRes.json();
 
         if (cancelled) return;
 
@@ -229,6 +232,7 @@ export default function Home() {
           ? topJobsJson
           : topJobsJson.jobs || topJobsJson.items || [];
         setTopJobs(topJobItems);
+        setUniqueJobTitles(Number(jobsMetricsJson?.total_jobs || 0));
 
         // ---- trends aligned to top 10 industries ----
         const aligned = await buildTrendAligned(topItems, series, yearFrom, year);
@@ -238,36 +242,7 @@ export default function Home() {
           console.log(`📊 Home trends loaded from ${yearFrom} to ${year} (${aligned.data.length} years)`);
         }
 
-        // ---- unique job titles (based on top industries, deduped) ----
-        (async () => {
-          try {
-            const dedupTop = dedupeByNaics(topItems).slice(0, 10);
-            if (!dedupTop.length) {
-              if (!cancelled) setUniqueJobTitles(0);
-              return;
-            }
-
-            const payloads = await Promise.all(
-              dedupTop.map((it: any) =>
-                fetch(`${API_BASE}/industries/${it.naics}/jobs?year=${year}&limit=5000`).then((r) => r.json())
-              )
-            );
-
-            const titles = new Set<string>();
-            for (const payload of payloads) {
-              const jobs = payload?.jobs || [];
-              for (const j of jobs) {
-                const t = j?.occ_title;
-                if (t) titles.add(String(t).trim());
-              }
-            }
-
-            if (!cancelled) setUniqueJobTitles(titles.size);
-          } catch (e) {
-            console.error("unique job titles calc error:", e);
-            if (!cancelled) setUniqueJobTitles(0);
-          }
-        })();
+        // unique job titles now sourced from /jobs/metrics for consistency
       } catch (e) {
         console.error("Home fetch error:", e);
         if (!cancelled) {
@@ -412,7 +387,7 @@ export default function Home() {
         </div>
 
         {loading && <p className="text-muted-foreground">Loading dashboard...</p>}
-        {!loading && <MetricsGrid metrics={cards} />}
+        {!loading && <MetricsGrid metrics={cards} showTrend={false} />}
 
         <div className="grid gap-6 lg:grid-cols-2">
           <Card className="glass-card">

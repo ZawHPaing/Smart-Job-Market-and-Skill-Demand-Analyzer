@@ -1,20 +1,65 @@
+import { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HomeAPI, MarketTickerItem } from '@/lib/home';
+import { useYear } from './YearContext';
 
-const tickerItems = [
-  { name: 'Tech Industry', value: '+18.5%', trend: 'up' },
-  { name: 'Software Engineer', value: '85,000 openings', trend: 'up' },
-  { name: 'Healthcare', value: '+12.3%', trend: 'up' },
-  { name: 'Data Scientist', value: '$145K median', trend: 'up' },
-  { name: 'Manufacturing', value: '-2.5%', trend: 'down' },
-  { name: 'AI/ML Jobs', value: '+35.2%', trend: 'up' },
-  { name: 'Remote Work', value: '+42%', trend: 'up' },
-  { name: 'Finance Sector', value: '+8.2%', trend: 'up' },
-  { name: 'Median Salary', value: '$78,500', trend: 'neutral' },
-  { name: 'Total Openings', value: '1.26M', trend: 'up' },
+const fallbackItems: MarketTickerItem[] = [
+  { name: 'Median Salary', value: '$0', trend: 'neutral' },
+  { name: 'Salary YoY', value: '0.0%', trend: 'neutral' },
+  { name: 'Top Growing Industry', value: '0.0%', trend: 'neutral' },
+  { name: 'Top Growing Occupation', value: '0.0%', trend: 'neutral' },
+  { name: 'Top Tech Skill', value: 'N/A', trend: 'neutral' },
+  { name: 'Highest Employment Occupation', value: '0', trend: 'neutral' },
+  { name: 'Hot Tech Count', value: '0', trend: 'neutral' },
 ];
 
+const formatCompact = (n: number) => {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return n.toString();
+};
+
+const formatValue = (value: string) => {
+  if (!value) return value;
+  if (value.includes('%') || value.includes('(')) return value;
+  if (value.startsWith('$')) {
+    const num = Number(value.replace(/[^0-9.-]/g, ''));
+    if (!Number.isFinite(num)) return value;
+    return `$${formatCompact(num)}`;
+  }
+  if (/^[+-]?\d+(\.\d+)?$/.test(value)) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return value;
+    return formatCompact(num);
+  }
+  return value;
+};
+
 export function MarketTicker() {
+  const { year } = useYear();
+  const [items, setItems] = useState<MarketTickerItem[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await HomeAPI.marketTicker(year);
+        if (cancelled) return;
+        setItems(res.items || []);
+      } catch {
+        if (cancelled) return;
+        setItems([]);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [year]);
+
+  const tickerItems = items.length ? items : fallbackItems;
+
   return (
     <div className="w-full border-b border-border/40 bg-secondary/30 py-2 overflow-hidden">
       <div className="ticker">
@@ -34,7 +79,7 @@ export function MarketTicker() {
                 {item.trend === 'up' && <TrendingUp className="h-3 w-3" />}
                 {item.trend === 'down' && <TrendingDown className="h-3 w-3" />}
                 {item.trend === 'neutral' && <Minus className="h-3 w-3" />}
-                {item.value}
+                {formatValue(item.value)}
               </span>
               <span className="text-muted-foreground/30">•</span>
             </div>

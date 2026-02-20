@@ -66,7 +66,7 @@ async def dashboard_metrics(
     year: int,
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryDashboardMetrics:
-    cache_key = f"industry_metrics_{year}"
+    cache_key = f"industry_metrics_v2_{year}"
     cached = cache.get(cache_key)
     if cached:
         return IndustryDashboardMetrics(**cached)

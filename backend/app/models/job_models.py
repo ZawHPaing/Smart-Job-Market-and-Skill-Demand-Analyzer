@@ -59,6 +59,7 @@ class JobDashboardMetrics(BaseModel):
     avg_job_growth_pct: float
     top_growing_job: Optional[TopGrowingJob] = None
     a_median: float
+    mean_salary: float
 
 
 class JobCard(BaseModel):

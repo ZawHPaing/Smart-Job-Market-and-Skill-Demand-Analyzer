@@ -6,6 +6,7 @@ import type { MetricCard as MetricCardType } from '@/types';
 interface MetricCardProps extends Omit<MetricCardType, 'id'> {
   animateValue?: boolean;
   delay?: number;
+  showTrend?: boolean;
 }
 
 function toNumber(val: unknown): number | null {
@@ -30,6 +31,7 @@ export function MetricCard({
   color = 'cyan',
   animateValue = true,
   delay = 0,
+  showTrend = true,
 }: MetricCardProps) {
   const [displayValue, setDisplayValue] = useState(0);
   const [isVisible, setIsVisible] = useState(false);
@@ -126,7 +128,7 @@ export function MetricCard({
           </div>
         </div>
 
-        {trend && (
+        {showTrend && trend && (
           <div
             className={cn(
               'flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium',

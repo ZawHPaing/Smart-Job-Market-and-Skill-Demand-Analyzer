@@ -593,99 +593,58 @@ class JobsRepo:
     # Dashboard metrics - OPTIMIZED (SINGLE AGGREGATION)
     # -------------------------
     async def dashboard_metrics(self, year: int, only_with_details: bool = True) -> Dict[str, Any]:
-        """Dashboard metrics using MAX employment values - single aggregation"""
-        
+        """Dashboard metrics using MAX employment values"""
+
         # Get job market trend (already optimized)
         job_market_trend = await self.get_job_market_trend(year)
-        
-        # Build match stage for filtering
+
+        # Build match stage for filtering (overall job titles count)
         match_stage = {
             "year": int(year),
             "occ_code": {"$ne": "00-0000"}
         }
-        
+
         if only_with_details:
             onet_socs = await self._get_onet_socs()
             if onet_socs:
                 bls_codes = [soc.replace(".00", "") for soc in onet_socs if isinstance(soc, str)]
                 if bls_codes:
                     match_stage["occ_code"] = {"$in": list(set(bls_codes))}
-        
-        # Single aggregation for all metrics
-        pipeline = [
+
+        # Total jobs (unique occupation titles)
+        jobs_pipeline = [
             {"$match": match_stage},
-            {
-                "$group": {
-                    "_id": "$occ_code",
-                    "occ_title": {"$first": "$occ_title"},
-                    "max_emp": {"$max": "$tot_emp"},
-                    "all_salaries": {"$push": "$a_median"}
-                }
-            },
-            {
-                "$match": {
-                    "max_emp": {"$gt": 0}
-                }
-            },
-            {
-                "$group": {
-                    "_id": None,
-                    "total_jobs": {"$sum": 1},
-                    "total_employment": {"$sum": "$max_emp"},
-                    "salaries": {"$push": "$all_salaries"}
-                }
-            },
-            {
-                "$project": {
-                    "total_jobs": 1,
-                    "total_employment": 1,
-                    "salaries": {
-                        "$reduce": {
-                            "input": "$salaries",
-                            "initialValue": [],
-                            "in": {"$concatArrays": ["$$value", "$$this"]}
-                        }
-                    }
-                }
-            }
+            {"$group": {"_id": "$occ_code"}},
+            {"$group": {"_id": None, "total_jobs": {"$sum": 1}}},
         ]
-        
-        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=1)
-        
-        if not result:
-            return {
+
+        jobs_result = await self.db["bls_oews"].aggregate(jobs_pipeline).to_list(length=1)
+        total_jobs = int((jobs_result[0] or {}).get("total_jobs", 0)) if jobs_result else 0
+
+        # Cross-industry totals for employment and salaries (direct row values)
+        cross_doc = await self.db["bls_oews"].find_one(
+            {
                 "year": int(year),
-                "total_jobs": 0,
-                "total_employment": 0.0,
-                "avg_job_growth_pct": job_market_trend,
-                "top_growing_job": None,
-                "a_median": 65000.0
-            }
-        
-        doc = result[0]
-        total_jobs = doc.get("total_jobs", 0)
-        total_employment = _to_float(doc.get("total_employment", 0))
-        
-        # Calculate median salary
-        salaries = [s for s in doc.get("salaries", []) if s is not None and s > 0]
-        salaries.sort()
-        
-        median_salary = 0.0
-        if salaries:
-            n = len(salaries)
-            mid = n // 2
-            if n % 2 == 1:
-                median_salary = salaries[mid]
-            else:
-                median_salary = (salaries[mid - 1] + salaries[mid]) / 2.0
-        
+                "naics": "000000",
+                "occ_code": "00-0000",
+                "occ_title": "All Occupations",
+                "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
+            },
+            {"_id": 0, "tot_emp": 1, "a_median": 1, "a_mean": 1},
+        ) or {}
+
+        total_employment = _to_float(cross_doc.get("tot_emp", 0))
+        median_salary = _to_float(cross_doc.get("a_median", 0))
+        mean_salary = _to_float(cross_doc.get("a_mean", 0))
+
         return {
             "year": int(year),
             "total_jobs": int(total_jobs),
             "total_employment": round(total_employment, 2),
             "avg_job_growth_pct": job_market_trend,
             "top_growing_job": None,
-            "a_median": round(median_salary, 2) if median_salary > 0 else 65000.0
+            "a_median": round(median_salary, 2) if median_salary > 0 else 0.0,
+            "mean_salary": round(mean_salary, 2) if mean_salary > 0 else 0.0,
         }
     
     # -------------------------

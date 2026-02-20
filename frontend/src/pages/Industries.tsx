@@ -18,11 +18,6 @@ const fmtKSafe = (n: any) => (Number.isFinite(Number(n)) ? fmtK(Number(n)) : "0K
 const fmtMSafe = (n: any) => (Number.isFinite(Number(n)) ? fmtM(Number(n)) : "0M");
 const fmtMoneyKSafe = (n: any) => (Number.isFinite(Number(n)) ? `$${fmtK(Number(n))}` : "$0K");
 
-function pctBadgeClass(pct?: number | null) {
-  if (pct == null) return "text-muted-foreground";
-  return pct >= 0 ? "text-green-500" : "text-coral";
-}
-
 // ✅ Extended chart colors for 10 items
 const CHART_COLORS = [
   "hsl(186 100% 50%)", // cyan
@@ -323,7 +318,7 @@ export default function Industries() {
         </div>
 
         {/* Metrics */}
-        <MetricsGrid metrics={metricsGrid} />
+        <MetricsGrid metrics={metricsGrid} showTrend={false} />
 
         {/* Top 10 Industries */}
         <Card className="glass-card">
@@ -354,10 +349,6 @@ export default function Industries() {
                           <h3 className="font-medium group-hover:text-cyan transition-colors">{ind.naics_title}</h3>
                           <p className="text-sm text-muted-foreground">NAICS: {ind.naics}</p>
                         </div>
-
-                        <span className={`text-sm font-medium ${pctBadgeClass(ind.growth_pct)}`}>
-                          {ind.growth_pct == null ? "—" : `${ind.growth_pct >= 0 ? "+" : ""}${ind.growth_pct}%`}
-                        </span>
                       </div>
 
                       <div className="mt-3 flex items-center justify-between text-sm">
@@ -384,9 +375,6 @@ export default function Industries() {
                               <h3 className="font-medium group-hover:text-cyan transition-colors">{ind.naics_title}</h3>
                               <p className="text-sm text-muted-foreground">NAICS: {ind.naics}</p>
                             </div>
-                            <span className={`text-sm font-medium ${pctBadgeClass(ind.growth_pct)}`}>
-                              {ind.growth_pct == null ? "—" : `${ind.growth_pct >= 0 ? "+" : ""}${ind.growth_pct}%`}
-                            </span>
                           </div>
 
                           <div className="mt-3 flex items-center justify-between text-sm">
@@ -458,3 +446,5 @@ export default function Industries() {
     </DashboardLayout>
   );
 }
+
+

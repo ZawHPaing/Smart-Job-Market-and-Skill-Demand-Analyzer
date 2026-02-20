@@ -1,9 +1,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronLeft, Briefcase } from 'lucide-react';
-import { DashboardLayout } from '@/components/layout';
+import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
-import { HorizontalBarChart } from '@/components/charts';
+import { HorizontalBarChart, MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -13,7 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { JobDetailAPI } from '@/lib/jobDetail';
+import { JobsAPI } from '@/lib/jobs';
 import type { JobDetailResponse, JobMetric, JobSkill, JobAbility, JobKnowledge } from '@/lib/jobDetail';
 
 // Helper functions
@@ -33,11 +35,15 @@ const getSkillId = (skillName: string): string => {
 const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
   const occ_code = id;
+  const { year } = useYear();
   
   const [skillSort, setSkillSort] = useState('importance');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [jobDetail, setJobDetail] = useState<JobDetailResponse | null>(null);
+  const [employmentTrendData, setEmploymentTrendData] = useState<any[]>([]);
+  const [salaryTrendData, setSalaryTrendData] = useState<any[]>([]);
+  const [chartLines, setChartLines] = useState<{ key: string; name: string; color: string }[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,9 +61,40 @@ const JobDetail = () => {
       console.log('🟡 Loading job detail for:', occ_code);
 
       try {
-        const data = await JobDetailAPI.get(occ_code);
+        const yearFrom = 2011;
+        const [data, summary] = await Promise.all([
+          JobDetailAPI.get(occ_code),
+          JobsAPI.summary(occ_code, yearFrom, year),
+        ]);
         if (cancelled) return;
         setJobDetail(data);
+
+        const title = data?.occ_title || summary?.occ_title || occ_code;
+        const lineKey = occ_code;
+        setChartLines([
+          {
+            key: lineKey,
+            name: title.length > 30 ? title.substring(0, 30) + '...' : title,
+            color: 'hsl(186 100% 50%)',
+          },
+        ]);
+
+        if (summary?.series?.length) {
+          const rowsEmployment = summary.series.map((p) => ({
+            year: p.year,
+            [lineKey]: p.total_employment ?? 0,
+          }));
+          const rowsSalary = summary.series.map((p) => ({
+            year: p.year,
+            [lineKey]: p.a_median ?? 0,
+          }));
+          setEmploymentTrendData(rowsEmployment);
+          setSalaryTrendData(rowsSalary);
+        } else {
+          setEmploymentTrendData([]);
+          setSalaryTrendData([]);
+        }
+
         console.log('🟢 Job detail loaded:', data);
         console.log('🟢 Knowledge count:', data.knowledge?.length);
       } catch (e: any) {
@@ -72,7 +109,7 @@ const JobDetail = () => {
 
     loadJobDetail();
     return () => { cancelled = true; };
-  }, [occ_code]);
+  }, [occ_code, year]);
 
   // Transform metrics for MetricsGrid component
   const metricsGridData = useMemo(() => {
@@ -209,7 +246,7 @@ const JobDetail = () => {
 
         {/* Key Metrics */}
         {metricsGridData.length > 0 ? (
-          <MetricsGrid metrics={metricsGridData} />
+          <MetricsGrid metrics={metricsGridData} showTrend={false} />
         ) : (
           <Card className="glass-card">
             <CardContent className="p-4 text-center text-muted-foreground">
@@ -217,6 +254,71 @@ const JobDetail = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* Job Trends Over Time */}
+        <Card className="glass-card">
+          <CardHeader>
+            <SectionHeader
+              title="Job Trends Over Time"
+              subtitle={`Employment and salary trends for this job (2011-${year})`}
+            />
+          </CardHeader>
+          <CardContent>
+            <Tabs
+              defaultValue="employment"
+              className="w-full"
+            >
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="employment">Employment Trends</TabsTrigger>
+                <TabsTrigger value="salary">Salary Trends</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="employment">
+                {employmentTrendData.length > 0 && chartLines.length > 0 ? (
+                  <>
+                    <div className="mb-2 text-xs text-muted-foreground text-center">
+                      Showing {employmentTrendData.length} years of historical data (
+                      {employmentTrendData[0]?.year} - {employmentTrendData[employmentTrendData.length - 1]?.year})
+                    </div>
+                    <MultiLineChart
+                      data={employmentTrendData}
+                      xAxisKey="year"
+                      lines={chartLines}
+                      height={300}
+                      maxLines={1}
+                    />
+                  </>
+                ) : (
+                  <div className="text-muted-foreground text-center py-8">
+                    No employment trend data available
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="salary">
+                {salaryTrendData.length > 0 && chartLines.length > 0 ? (
+                  <>
+                    <div className="mb-2 text-xs text-muted-foreground text-center">
+                      Showing {salaryTrendData.length} years of historical data (
+                      {salaryTrendData[0]?.year} - {salaryTrendData[salaryTrendData.length - 1]?.year})
+                    </div>
+                    <MultiLineChart
+                      data={salaryTrendData}
+                      xAxisKey="year"
+                      lines={chartLines}
+                      height={300}
+                      maxLines={1}
+                    />
+                  </>
+                ) : (
+                  <div className="text-muted-foreground text-center py-8">
+                    No salary trend data available
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
 
         {/* Skills Section */}
         <div className="grid gap-6 lg:grid-cols-2">
@@ -516,3 +618,5 @@ const JobDetail = () => {
 };
 
 export default JobDetail;
+
+

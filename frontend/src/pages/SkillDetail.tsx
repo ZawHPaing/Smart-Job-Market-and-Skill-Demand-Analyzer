@@ -260,7 +260,7 @@ const SkillDetail = () => {
 
         {/* Key Metrics */}
         {metricsGridData.length > 0 ? (
-          <MetricsGrid metrics={metricsGridData} />
+          <MetricsGrid metrics={metricsGridData} showTrend={false} />
         ) : (
           <Card className="glass-card">
             <CardContent className="p-4 text-center text-muted-foreground">

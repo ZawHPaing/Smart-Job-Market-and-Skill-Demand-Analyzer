@@ -113,6 +113,7 @@ async def dashboard_metrics(
         avg_job_growth_pct=data["avg_job_growth_pct"],
         top_growing_job=top_obj,
         a_median=data["a_median"],
+        mean_salary=data.get("mean_salary", 0.0),
     )
     
     cache.set(cache_key, response.dict())

@@ -62,6 +62,16 @@ class EmploymentTrendsResponse(BaseModel):
     limit: int
     series: List[TrendSeries]
 
+class MarketTickerItem(BaseModel):
+    name: str
+    value: str
+    trend: str  # "up" | "down" | "neutral"
+
+
+class MarketTickerResponse(BaseModel):
+    year: int
+    items: List[MarketTickerItem]
+
 class HomeOverviewResponse(BaseModel):
     year: int
     total_employment: float
