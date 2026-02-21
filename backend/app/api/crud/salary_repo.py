@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from motor.core import AgnosticDatabase
+from app.api.crud.jobs_repo import JobsRepo
 
 
 class SalaryRepo:
     def __init__(self, db: AgnosticDatabase):
+        self.db = db
         self.col = db["bls_oews"]
 
     async def latest_year(self) -> int:
@@ -441,110 +443,46 @@ class SalaryRepo:
         end_year: Optional[int] = None,
     ) -> List[dict]:
         top_limit = min(max(limit, 1), 20)
+        year_from = int(start_year) if start_year is not None else 2011
+        year_to_anchor = int(year)
 
-        # Pick top jobs by employment in the selected anchor year (cross-industry only).
-        top_pipeline = [
-            {
-                "$match": {
-                    "year": year,
-                    "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
-                    "occ_title": {"$nin": ["All Occupations", "Industry Total"]},
-                }
-            },
-            {
-                "$group": {
-                    "_id": {"occ_code": "$occ_code", "occ_title": "$occ_title"},
-                    "employment": {"$max": self._num("tot_emp")},
-                }
-            },
-            {
-                "$project": {
-                    "_id": 0,
-                    "occ_code": "$_id.occ_code",
-                    "occ_title": "$_id.occ_title",
-                    "employment": 1,
-                }
-            },
-            {"$sort": {"employment": -1}},
-            {"$limit": top_limit},
-        ]
-        top_rows = await self.col.aggregate(top_pipeline).to_list(length=top_limit)
-        if not top_rows:
-            return []
+        # Keep ranking logic consistent with Jobs page (cross-industry + only_with_details).
+        jobs_repo = JobsRepo(self.db)
+        trends = await jobs_repo.top_jobs_trends(
+            year_from=year_from,
+            year_to=year_to_anchor,
+            limit=top_limit,
+            group=None,
+            sort_by="employment",
+            only_with_details=True,
+        )
 
-        order: List[str] = []
-        title_by_code: Dict[str, str] = {}
-        for r in top_rows:
-            code = str(r.get("occ_code") or "").strip()
-            title = str(r.get("occ_title") or "").strip()
-            if not code or not title:
+        # Optional end_year slices the returned points but does not change anchor-year ranking.
+        if end_year is not None:
+            end_y = int(end_year)
+            for s in trends:
+                s["points"] = [
+                    p for p in (s.get("points") or [])
+                    if int(p.get("year") or 0) <= end_y
+                ]
+
+        out: List[dict] = []
+        for s in trends:
+            code = str(s.get("occ_code") or "").strip()
+            name = str(s.get("occ_title") or "").strip()
+            points = []
+            for p in (s.get("points") or []):
+                y = int(p.get("year") or 0)
+                v = int(p.get("employment") or 0)
+                points.append({"year": y, "value": v})
+            points = sorted(points, key=lambda p: p["year"])
+            if not code or not name or not points:
                 continue
-            if code in title_by_code:
-                continue
-            order.append(code)
-            title_by_code[code] = title
+            out.append({"occ_code": code, "name": name, "points": points})
 
-        if not order:
-            return []
-
-        match: Dict[str, Any] = {
-            "naics_title": {"$regex": "^Cross-industry$", "$options": "i"},
-            "occ_code": {"$in": order},
-            "occ_title": {"$nin": ["All Occupations", "Industry Total"]},
-        }
-        if start_year is not None or end_year is not None:
-            yr: Dict[str, Any] = {}
-            if start_year is not None:
-                yr["$gte"] = start_year
-            if end_year is not None:
-                yr["$lte"] = end_year
-            match["year"] = yr
-
-        pipeline = [
-            {"$match": match},
-            {
-                "$group": {
-                    "_id": {"occ_code": "$occ_code", "year": "$year"},
-                    "employment": {"$max": self._num("tot_emp")},
-                }
-            },
-            {
-                "$project": {
-                    "_id": 0,
-                    "occ_code": "$_id.occ_code",
-                    "year": "$_id.year",
-                    "value": "$employment",
-                }
-            },
-            {"$sort": {"occ_code": 1, "year": 1}},
-        ]
-
-        rows = await self.col.aggregate(pipeline).to_list(length=10000)
-        by_code: Dict[str, List[dict]] = {code: [] for code in order}
-        for r in rows:
-            code = str(r.get("occ_code") or "").strip()
-            if code not in by_code:
-                continue
-            by_code[code].append(
-                {
-                    "year": int(r.get("year") or 0),
-                    "value": int(r.get("value") or 0),
-                }
-            )
-
-        series: List[dict] = []
-        for code in order:
-            points = sorted(by_code.get(code, []), key=lambda p: p["year"])
-            if not points:
-                continue
-            series.append(
-                {
-                    "occ_code": code,
-                    "name": title_by_code.get(code, code),
-                    "points": points,
-                }
-            )
-        return series
+        # Ensure descending order by the most recent year's employment.
+        out.sort(key=lambda s: int((s.get("points") or [{}])[-1].get("value", 0)), reverse=True)
+        return out
 
 
 

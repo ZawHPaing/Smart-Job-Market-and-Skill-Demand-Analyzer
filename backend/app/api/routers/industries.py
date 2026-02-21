@@ -66,7 +66,7 @@ async def dashboard_metrics(
     year: int,
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryDashboardMetrics:
-    cache_key = f"industry_metrics_v2_{year}"
+    cache_key = f"industry_metrics_v3_{year}"
     cached = cache.get(cache_key)
     if cached:
         return IndustryDashboardMetrics(**cached)
@@ -211,7 +211,7 @@ async def top_jobs(
     limit: int = Query(6, ge=1, le=2000),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryTopJobsResponse:
-    cache_key = f"industries_{naics}_top_jobs_{year}_{limit}"
+    cache_key = f"industries_onet_v2_{naics}_top_jobs_{year}_{limit}"
     cached = cache.get(cache_key)
     if cached:
         return IndustryTopJobsResponse(**cached)
@@ -240,7 +240,7 @@ async def top_job(
     year: int = Query(...),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryTopJobResponse:
-    cache_key = f"industries_{naics}_top_job_{year}"
+    cache_key = f"industries_onet_v2_{naics}_top_job_{year}"
     cached = cache.get(cache_key)
     if cached:
         return IndustryTopJobResponse(**cached)
@@ -268,7 +268,7 @@ async def jobs(
     limit: int = Query(200, ge=1, le=5000),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryJobsResponse:
-    cache_key = f"industries_{naics}_jobs_{year}_{limit}"
+    cache_key = f"industries_onet_v2_{naics}_jobs_{year}_{limit}"
     cached = cache.get(cache_key)
     if cached:
         return IndustryJobsResponse(**cached)

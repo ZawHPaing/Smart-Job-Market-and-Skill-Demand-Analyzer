@@ -105,7 +105,8 @@ const Jobs = () => {
   const [topJobs, setTopJobs] = useState<JobCard[]>([]);
   const [employmentTrendData, setEmploymentTrendData] = useState<any[]>([]);
   const [salaryTrendData, setSalaryTrendData] = useState<any[]>([]);
-  const [chartLines, setChartLines] = useState<{ key: string; name: string; color: string; }[]>([]);
+  const [employmentChartLines, setEmploymentChartLines] = useState<{ key: string; name: string; color: string; }[]>([]);
+  const [salaryChartLines, setSalaryChartLines] = useState<{ key: string; name: string; color: string; }[]>([]);
   
   // Cache for API responses
   const apiCache = useRef<Map<string, any>>(new Map());
@@ -136,7 +137,8 @@ const Jobs = () => {
             setTopJobs(cached.topJobs);
             setEmploymentTrendData(cached.employmentTrendData);
             setSalaryTrendData(cached.salaryTrendData);
-            setChartLines(cached.chartLines);
+            setEmploymentChartLines(cached.employmentChartLines);
+            setSalaryChartLines(cached.salaryChartLines);
             setAllJobs(cached.allJobs);
             setLoading(false);
           }
@@ -149,8 +151,8 @@ const Jobs = () => {
         const [m, topJobsData, employmentTrends, salaryTrends, jobsList] = await Promise.all([
           JobsAPI.dashboardMetrics(year),
           JobsAPI.top(year, 10, sortBy),
-          JobsAPI.topTrends(yearFrom, year, 10, undefined, sortBy),
-          JobsAPI.topSalaryTrends(yearFrom, year, 10, undefined, sortBy),
+          JobsAPI.topTrends(yearFrom, year, 10, undefined, 'employment'),
+          JobsAPI.topSalaryTrends(yearFrom, year, 10, undefined, 'salary'),
           JobsAPI.list({ year, limit: 1000 }),
         ]);
 
@@ -163,18 +165,24 @@ const Jobs = () => {
         setMetrics(m);
         setTopJobs(topJobsData.jobs);
 
-        // Generate chart lines from top jobs
-        const lines = topJobsData.jobs.slice(0, 10).map((job, index) => ({
-          key: job.occ_code,
-          name: job.occ_title.length > 20 
-            ? job.occ_title.substring(0, 20) + '...' 
-            : job.occ_title,
+        // Process employment trends - align with top jobs
+        const sortedEmploymentSeries = [...(employmentTrends?.series || [])]
+          .sort((a: any, b: any) => {
+            const aLatest = a?.points?.[a.points.length - 1]?.employment ?? 0;
+            const bLatest = b?.points?.[b.points.length - 1]?.employment ?? 0;
+            return bLatest - aLatest;
+          })
+          .slice(0, 10);
+
+        const employmentTopCodes = sortedEmploymentSeries.map((s: any) => s.occ_code);
+        const employmentLines = sortedEmploymentSeries.map((s: any, index: number) => ({
+          key: s.occ_code,
+          name: s.occ_title.length > 20
+            ? s.occ_title.substring(0, 20) + '...'
+            : s.occ_title,
           color: pickColor(index),
         }));
-        setChartLines(lines);
-
-        // Process employment trends - align with top jobs
-        const topCodes = topJobsData.jobs.map((j: JobCard) => j.occ_code);
+        setEmploymentChartLines(employmentLines);
         
         let employmentRows: any[] = [];
         if (employmentTrends?.series?.length) {
@@ -194,7 +202,7 @@ const Jobs = () => {
           
           employmentRows = sortedYears.map(year => {
             const row: any = { year };
-            topCodes.forEach(code => {
+            employmentTopCodes.forEach(code => {
               const series = seriesByCode.get(code);
               const point = series?.points?.find((p: any) => p.year === year);
               row[code] = point ? point.employment : 0;
@@ -202,9 +210,29 @@ const Jobs = () => {
             return row;
           });
           setEmploymentTrendData(employmentRows);
+        } else {
+          setEmploymentTrendData([]);
         }
 
         // Process salary trends - align with top jobs
+        const sortedSalarySeries = [...(salaryTrends?.series || [])]
+          .sort((a: any, b: any) => {
+            const aLatest = a?.points?.[a.points.length - 1]?.salary ?? 0;
+            const bLatest = b?.points?.[b.points.length - 1]?.salary ?? 0;
+            return bLatest - aLatest;
+          })
+          .slice(0, 10);
+
+        const salaryTopCodes = sortedSalarySeries.map((s: any) => s.occ_code);
+        const salaryLines = sortedSalarySeries.map((s: any, index: number) => ({
+          key: s.occ_code,
+          name: s.occ_title.length > 20
+            ? s.occ_title.substring(0, 20) + '...'
+            : s.occ_title,
+          color: pickColor(index),
+        }));
+        setSalaryChartLines(salaryLines);
+
         let salaryRows: any[] = [];
         if (salaryTrends?.series?.length) {
           // Build map of series by occ_code
@@ -223,7 +251,7 @@ const Jobs = () => {
           
           salaryRows = sortedYears.map(year => {
             const row: any = { year };
-            topCodes.forEach(code => {
+            salaryTopCodes.forEach(code => {
               const series = seriesByCode.get(code);
               const point = series?.points?.find((p: any) => p.year === year);
               row[code] = point ? point.salary : 0;
@@ -231,6 +259,8 @@ const Jobs = () => {
             return row;
           });
           setSalaryTrendData(salaryRows);
+        } else {
+          setSalaryTrendData([]);
         }
 
         // Sort all jobs by the current sort criteria
@@ -251,7 +281,8 @@ const Jobs = () => {
           topJobs: topJobsData.jobs,
           employmentTrendData: employmentRows,
           salaryTrendData: salaryRows,
-          chartLines: lines,
+          employmentChartLines: employmentLines,
+          salaryChartLines: salaryLines,
           allJobs: sortedJobs
         });
 
@@ -287,6 +318,15 @@ const Jobs = () => {
   const topJobsSet = useMemo(() => {
     return new Set((topJobs || []).map(j => j.occ_code));
   }, [topJobs]);
+
+  const filteredTopJobs = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return topJobs;
+    return topJobs.filter((job) =>
+      job.occ_title.toLowerCase().includes(q) ||
+      job.occ_code.includes(q)
+    );
+  }, [topJobs, debouncedSearch]);
 
   const filteredJobsNoTop = useMemo(() => {
     return filteredJobs.filter(job => !topJobsSet.has(job.occ_code));
@@ -458,7 +498,7 @@ const Jobs = () => {
             <CardHeader>
               <SectionHeader
                 title="Job Trends Over Time"
-                subtitle={`Top ${topJobs.length} jobs by ${sortBy === 'employment' ? 'job postings' : 'median salary'} (2011-${year})`}
+                subtitle={`Employment tab: top jobs by job postings, Salary tab: top jobs by median salary (2011-${year})`}
               />
             </CardHeader>
             <CardContent>
@@ -469,7 +509,7 @@ const Jobs = () => {
                 </TabsList>
                 
                 <TabsContent value="employment">
-                  {employmentTrendData.length > 0 && chartLines.length > 0 ? (
+                  {employmentTrendData.length > 0 && employmentChartLines.length > 0 ? (
                     <>
                       <div className="mb-2 text-xs text-muted-foreground text-center">
                         Showing {employmentTrendData.length} years of historical data 
@@ -478,7 +518,7 @@ const Jobs = () => {
                       <MultiLineChart
                         data={employmentTrendData}
                         xAxisKey="year"
-                        lines={chartLines}
+                        lines={employmentChartLines}
                         height={300}
                         maxLines={10}
                       />
@@ -491,7 +531,7 @@ const Jobs = () => {
                 </TabsContent>
                 
                 <TabsContent value="salary">
-                  {salaryTrendData.length > 0 && chartLines.length > 0 ? (
+                  {salaryTrendData.length > 0 && salaryChartLines.length > 0 ? (
                     <>
                       <div className="mb-2 text-xs text-muted-foreground text-center">
                         Showing {salaryTrendData.length} years of historical data 
@@ -500,7 +540,7 @@ const Jobs = () => {
                       <MultiLineChart
                         data={salaryTrendData}
                         xAxisKey="year"
-                        lines={chartLines}
+                        lines={salaryChartLines}
                         height={300}
                         maxLines={10}
                       />
@@ -529,13 +569,11 @@ const Jobs = () => {
           </CardHeader>
           <CardContent>
             {/* Top Jobs Section (always visible) */}
-            {filteredJobs.filter(job => topJobsSet.has(job.occ_code)).length > 0 && (
+            {filteredTopJobs.length > 0 && (
               <>
                 <h3 className="text-sm font-medium text-muted-foreground mb-3">Top Jobs</h3>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-6">
-                  {filteredJobs
-                    .filter(job => topJobsSet.has(job.occ_code))
-                    .map((job) => (
+                  {filteredTopJobs.map((job) => (
                       <Link
                         key={job.occ_code}
                         to={`/jobs/${encodeURIComponent(job.occ_code)}`}

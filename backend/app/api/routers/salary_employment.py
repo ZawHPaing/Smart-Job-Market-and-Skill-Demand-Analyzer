@@ -246,7 +246,7 @@ async def job_employment_timeseries(
     end_year: Optional[int] = Query(None),
     db: AgnosticDatabase = Depends(get_db),
 ) -> JobEmploymentTimeSeriesResponse:
-    cache_key = f"salary_job_timeseries_{year}_{limit}_{start_year}_{end_year}"
+    cache_key = f"salary_job_timeseries_v4_{year}_{limit}_{start_year}_{end_year}"
     cached = cache.get(cache_key)
     if cached:
         return JobEmploymentTimeSeriesResponse(**cached)

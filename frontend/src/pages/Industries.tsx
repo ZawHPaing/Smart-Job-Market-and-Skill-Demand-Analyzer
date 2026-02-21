@@ -262,6 +262,7 @@ export default function Industries() {
       {
         title: "Avg Industry Growth",
         value: metrics.avg_industry_growth_pct,
+        suffix: "%",
         trend: { value: 0, direction: "up" as const },
         color: "green" as const,
       },

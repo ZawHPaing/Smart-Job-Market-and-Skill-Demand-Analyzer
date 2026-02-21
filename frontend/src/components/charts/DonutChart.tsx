@@ -19,6 +19,7 @@ interface DonutChartProps {
   showSubtitle?: boolean; // Control subtitle visibility
   showHoverText?: boolean; // Control hover instruction text visibility
   showCenterTotal?: boolean; // Control center total text visibility
+  totalOverride?: number; // Optional denominator/center total override
 }
 
 const COLORS = [
@@ -83,12 +84,15 @@ export function DonutChart({
   showSubtitle = true,
   showHoverText = true,
   showCenterTotal = true,
+  totalOverride,
 }: DonutChartProps) {
-  const total = data.reduce((a, b) => a + (b.value || 0), 0) || 1;
+  const computedTotal = data.reduce((a, b) => a + (b.value || 0), 0);
+  const total = totalOverride && totalOverride > 0 ? totalOverride : (computedTotal || 1);
 
   // add pct to each item for tooltip + list
-  const withPct = data.map((d) => ({
+  const withPct = data.map((d, idx) => ({
     ...d,
+    __idx: idx,
     __pct: (d.value || 0) / total,
   }));
 
@@ -185,8 +189,7 @@ export function DonutChart({
         <div className="grid grid-cols-2 gap-3">
           {/* Left Column */}
           <div className="space-y-2">
-            {leftColumn.map((d, idx) => {
-              const originalIndex = topList.findIndex(item => item.name === d.name);
+            {leftColumn.map((d) => {
               return (
                 <div
                   key={d.name}
@@ -196,7 +199,7 @@ export function DonutChart({
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: COLORS[originalIndex % COLORS.length] }}
+                      style={{ backgroundColor: COLORS[(d as any).__idx % COLORS.length] }}
                     />
                     <span className="text-sm text-muted-foreground truncate">
                       {shortName(d.name, 25)}
@@ -212,8 +215,7 @@ export function DonutChart({
 
           {/* Right Column */}
           <div className="space-y-2">
-            {rightColumn.map((d, idx) => {
-              const originalIndex = topList.findIndex(item => item.name === d.name);
+            {rightColumn.map((d) => {
               return (
                 <div
                   key={d.name}
@@ -223,7 +225,7 @@ export function DonutChart({
                   <div className="flex items-center gap-2 min-w-0">
                     <span
                       className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: COLORS[originalIndex % COLORS.length] }}
+                      style={{ backgroundColor: COLORS[(d as any).__idx % COLORS.length] }}
                     />
                     <span className="text-sm text-muted-foreground truncate">
                       {shortName(d.name, 25)}

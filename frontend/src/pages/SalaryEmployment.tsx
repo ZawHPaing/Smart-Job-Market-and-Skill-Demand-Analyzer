@@ -86,6 +86,22 @@ function buildMultiLineRows(series: { key: string; points: { year: number; value
   return Array.from(yearMap.values()).sort((a, b) => (a.year as number) - (b.year as number));
 }
 
+function normalizeEmploymentTrendMetric(items: MetricItem[]): MetricItem[] {
+  return (items || []).map((m) => {
+    if (m.title !== "Employment Trend") return m;
+    const raw = m.value;
+    const num =
+      typeof raw === "number"
+        ? raw
+        : Number.parseFloat(String(raw ?? "").replace(/[^0-9.-]/g, ""));
+    return {
+      ...m,
+      value: Number.isFinite(num) ? num : raw,
+      suffix: "%",
+    };
+  });
+}
+
 export default function SalaryEmployment() {
   const { year } = useYear();
   const [tab, setTab] = useState<"industries" | "jobs">("industries");
@@ -199,7 +215,7 @@ export default function SalaryEmployment() {
         }),
       ]);
 
-      setMetrics(m.metrics);
+      setMetrics(normalizeEmploymentTrendMetric(m.metrics));
       setIndustryBar(bar.items);
       setIndustriesTable(dedupeIndustriesByName(table.items || []));
       setIndustriesTotal(table.total);
@@ -238,7 +254,7 @@ export default function SalaryEmployment() {
         getJobEmploymentTimeSeries({ year, limit: TOP_N }).catch(() => ({ series: [] })),
       ]);
 
-      setMetrics(m.metrics);
+      setMetrics(normalizeEmploymentTrendMetric(m.metrics));
       setJobsTable(table.items);
       setJobsTotal(table.total);
       setCrossIndustryTopJobs(topCross.items || []);

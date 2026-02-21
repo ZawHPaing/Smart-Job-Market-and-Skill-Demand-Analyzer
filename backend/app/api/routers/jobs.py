@@ -48,7 +48,7 @@ async def list_jobs(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobListResponse:
     """List all jobs/occupations - only those with O*NET data by default"""
-    cache_key = f"jobs_list_{year}_{group}_{search}_{limit}_{offset}_{only_with_details}"
+    cache_key = f"jobs_list_crosspref_v2_{year}_{group}_{search}_{limit}_{offset}_{only_with_details}"
     cached = cache.get(cache_key)
     if cached:
         return JobListResponse(**cached)
@@ -152,7 +152,7 @@ async def top_jobs(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobTopResponse:
     """Top jobs by employment or salary"""
-    cache_key = f"jobs_top_{year}_{limit}_{by}_{group}"
+    cache_key = f"jobs_top_cross_v2_{year}_{limit}_{by}_{group}"
     cached = cache.get(cache_key)
     if cached:
         return JobTopResponse(**cached)
@@ -192,7 +192,7 @@ async def top_jobs_trends(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobTopTrendsResponse:
     """Employment trends for top jobs over time"""
-    cache_key = f"jobs_trends_{year_from}_{year_to}_{limit}_{group}_{sort_by}"
+    cache_key = f"jobs_trends_cross_v2_{year_from}_{year_to}_{limit}_{group}_{sort_by}"
     cached = cache.get(cache_key)
     if cached:
         return JobTopTrendsResponse(**cached)
@@ -228,7 +228,7 @@ async def top_jobs_salary_trends(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobTopSalaryTrendsResponse:
     """Salary trends for top jobs over time"""
-    cache_key = f"jobs_salary_trends_{year_from}_{year_to}_{limit}_{group}_{sort_by}"
+    cache_key = f"jobs_salary_trends_cross_v2_{year_from}_{year_to}_{limit}_{group}_{sort_by}"
     cached = cache.get(cache_key)
     if cached:
         return JobTopSalaryTrendsResponse(**cached)
@@ -263,7 +263,7 @@ async def top_jobs_combined(
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> JobTopCombinedResponse:
     """Get combined data for top jobs - employment and salary trends"""
-    cache_key = f"jobs_combined_{year}_{limit}_{by}_{group}"
+    cache_key = f"jobs_combined_cross_v2_{year}_{limit}_{by}_{group}"
     cached = cache.get(cache_key)
     if cached:
         return JobTopCombinedResponse(**cached)

@@ -1,9 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import type { MetricCard as MetricCardType } from '@/types';
+import { useEffect, useState, useRef } from "react";
+import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { MetricCard as MetricCardType } from "@/types";
 
-interface MetricCardProps extends Omit<MetricCardType, 'id'> {
+interface MetricCardProps extends Omit<MetricCardType, "id"> {
   animateValue?: boolean;
   delay?: number;
   showTrend?: boolean;
@@ -11,13 +11,13 @@ interface MetricCardProps extends Omit<MetricCardType, 'id'> {
 
 function toNumber(val: unknown): number | null {
   if (val === null || val === undefined) return null;
-  if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+  if (typeof val === "number") return Number.isFinite(val) ? val : null;
 
   // handle strings like "$78,500", "+8.5%", "131.8M", etc.
   const s = String(val).trim();
   if (!s) return null;
 
-  const cleaned = s.replace(/[^0-9.-]/g, '');
+  const cleaned = s.replace(/[^0-9.-]/g, "");
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : null;
 }
@@ -25,10 +25,10 @@ function toNumber(val: unknown): number | null {
 export function MetricCard({
   title,
   value,
-  prefix = '',
-  suffix = '',
+  prefix = "",
+  suffix = "",
   trend,
-  color = 'cyan',
+  color = "cyan",
   animateValue = true,
   delay = 0,
   showTrend = true,
@@ -81,34 +81,39 @@ export function MetricCard({
   }, [isVisible, animateValue, isNumeric, numericValue, delay]);
 
   const formatValue = (val: number) => {
-    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1) + 'M';
-    if (val >= 1_000) return (val / 1_000).toFixed(val >= 10_000 ? 0 : 1) + 'K';
-    return val.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    if (val >= 1_000_000) return (val / 1_000_000).toFixed(1) + "M";
+    if (val >= 1_000) return (val / 1_000).toFixed(val >= 10_000 ? 0 : 1) + "K";
+    return val.toLocaleString("en-US", { maximumFractionDigits: 0 });
   };
 
   const glowClass = {
-    cyan: 'hover-glow-cyan',
-    coral: 'hover-glow-coral',
-    purple: 'hover-glow-purple',
-    green: 'hover-glow-cyan',
-    amber: 'hover-glow-coral',
+    cyan: "hover-glow-cyan",
+    coral: "hover-glow-coral",
+    purple: "hover-glow-purple",
+    green: "hover-glow-cyan",
+    amber: "hover-glow-coral",
   }[color];
 
   const accentClass = {
-    cyan: 'text-cyan',
-    coral: 'text-coral',
-    purple: 'text-purple',
-    green: 'text-green-500',
-    amber: 'text-amber',
+    cyan: "text-cyan",
+    coral: "text-coral",
+    purple: "text-purple",
+    green: "text-green-500",
+    amber: "text-amber",
   }[color];
 
   const safeText =
-    value === null || value === undefined || String(value).trim() === '' ? '—' : String(value);
+    value === null || value === undefined || String(value).trim() === "" ? "-" : String(value);
+
+  // Keep numeric values large, but clamp long string values so cards don't become very tall.
+  const valueClass = isNumeric
+    ? "counter-value"
+    : "text-xl md:text-2xl font-bold leading-tight line-clamp-3 break-words max-w-[16ch]";
 
   return (
     <div
       ref={cardRef}
-      className={cn('metric-card', glowClass, isVisible && 'animate-fade-in')}
+      className={cn("metric-card", glowClass, isVisible && "animate-fade-in")}
       style={{ animationDelay: `${delay}ms` }}
     >
       <div className="flex items-start justify-between">
@@ -118,7 +123,7 @@ export function MetricCard({
           <div className="flex items-baseline gap-1">
             {prefix && <span className="text-xl text-muted-foreground">{prefix}</span>}
 
-            <span className={cn('counter-value', accentClass)}>
+            <span className={cn(valueClass, accentClass)} title={isNumeric ? undefined : safeText}>
               {isNumeric
                 ? formatValue(animateValue ? displayValue : (numericValue as number))
                 : safeText}
@@ -131,15 +136,15 @@ export function MetricCard({
         {showTrend && trend && (
           <div
             className={cn(
-              'flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium',
-              trend.direction === 'up' && 'bg-green-500/10 text-green-500',
-              trend.direction === 'down' && 'bg-coral/10 text-coral',
-              trend.direction === 'neutral' && 'bg-muted text-muted-foreground'
+              "flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
+              trend.direction === "up" && "bg-green-500/10 text-green-500",
+              trend.direction === "down" && "bg-coral/10 text-coral",
+              trend.direction === "neutral" && "bg-muted text-muted-foreground"
             )}
           >
-            {trend.direction === 'up' && <TrendingUp className="h-3 w-3" />}
-            {trend.direction === 'down' && <TrendingDown className="h-3 w-3" />}
-            {trend.direction === 'neutral' && <Minus className="h-3 w-3" />}
+            {trend.direction === "up" && <TrendingUp className="h-3 w-3" />}
+            {trend.direction === "down" && <TrendingDown className="h-3 w-3" />}
+            {trend.direction === "neutral" && <Minus className="h-3 w-3" />}
             {Math.abs(trend.value)}%
           </div>
         )}
@@ -147,13 +152,13 @@ export function MetricCard({
 
       <div
         className={cn(
-          'absolute bottom-0 left-0 h-1 w-0 rounded-full transition-all duration-500',
-          isVisible && 'w-full',
-          color === 'cyan' && 'bg-gradient-to-r from-cyan to-cyan/50',
-          color === 'coral' && 'bg-gradient-to-r from-coral to-coral/50',
-          color === 'purple' && 'bg-gradient-to-r from-purple to-purple/50',
-          color === 'green' && 'bg-gradient-to-r from-green-500 to-green-500/50',
-          color === 'amber' && 'bg-gradient-to-r from-amber to-amber/50'
+          "absolute bottom-0 left-0 h-1 w-0 rounded-full transition-all duration-500",
+          isVisible && "w-full",
+          color === "cyan" && "bg-gradient-to-r from-cyan to-cyan/50",
+          color === "coral" && "bg-gradient-to-r from-coral to-coral/50",
+          color === "purple" && "bg-gradient-to-r from-purple to-purple/50",
+          color === "green" && "bg-gradient-to-r from-green-500 to-green-500/50",
+          color === "amber" && "bg-gradient-to-r from-amber to-amber/50"
         )}
       />
     </div>

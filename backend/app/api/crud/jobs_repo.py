@@ -132,7 +132,9 @@ class JobsRepo:
         only_with_details: bool = True
     ) -> Tuple[int, List[Dict[str, Any]]]:
         """
-        Get list of unique occupations - uses MAX tot_emp per occupation for the year
+        Get list of unique occupations for the year.
+        If an occupation appears in multiple industries, prefer the cross-industry
+        row (naics=000000); otherwise fallback to the max-employment row.
         """
         if year is None:
             year = await self._latest_year()
@@ -173,6 +175,9 @@ class JobsRepo:
                     "group": {"$first": "$group"},
                     "max_emp": {"$max": "$tot_emp"},
                     "all_docs": {"$push": {
+                        "naics": "$naics",
+                        "occ_title": "$occ_title",
+                        "group": "$group",
                         "tot_emp": "$tot_emp",
                         "a_median": "$a_median"
                     }}
@@ -180,6 +185,18 @@ class JobsRepo:
             },
             {
                 "$addFields": {
+                    "cross_doc": {
+                        "$arrayElemAt": [
+                            {
+                                "$filter": {
+                                    "input": "$all_docs",
+                                    "as": "doc",
+                                    "cond": {"$eq": ["$$doc.naics", "000000"]}
+                                }
+                            },
+                            0
+                        ]
+                    },
                     "selected_doc": {
                         "$arrayElemAt": [
                             {
@@ -196,10 +213,10 @@ class JobsRepo:
             },
             {
                 "$project": {
-                    "occ_title": 1,
-                    "group": 1,
-                    "total_employment": "$max_emp",
-                    "a_median": "$selected_doc.a_median"
+                    "occ_title": {"$ifNull": ["$cross_doc.occ_title", "$occ_title"]},
+                    "group": {"$ifNull": ["$cross_doc.group", "$group"]},
+                    "total_employment": {"$ifNull": ["$cross_doc.tot_emp", "$max_emp"]},
+                    "a_median": {"$ifNull": ["$cross_doc.a_median", "$selected_doc.a_median"]}
                 }
             },
             {
@@ -251,13 +268,18 @@ class JobsRepo:
         group: Optional[str] = None,
         only_with_details: bool = True
     ) -> List[Dict[str, Any]]:
-        """Top jobs using MAX tot_emp per occupation"""
+        """Top jobs using MAX aggregation per occupation.
+
+        - by="employment": rank by max tot_emp
+        - by="salary": rank by max a_median
+        """
         
         pipeline = [
             {
                 "$match": {
                     "year": int(year),
-                    "occ_code": {"$ne": "00-0000"}
+                    "occ_code": {"$ne": "00-0000"},
+                    "naics": "000000",
                 }
             }
         ]
@@ -273,55 +295,77 @@ class JobsRepo:
                 if bls_codes:
                     pipeline[0]["$match"]["occ_code"] = {"$in": list(set(bls_codes))}
         
-        pipeline.extend([
-            {
-                "$group": {
-                    "_id": "$occ_code",
-                    "occ_title": {"$first": "$occ_title"},
-                    "group": {"$first": "$group"},
-                    "max_emp": {"$max": "$tot_emp"},
-                    "all_docs": {"$push": {
-                        "tot_emp": "$tot_emp",
-                        "a_median": "$a_median"
-                    }}
-                }
-            },
-            {
-                "$addFields": {
-                    "selected_doc": {
-                        "$arrayElemAt": [
-                            {
-                                "$filter": {
-                                    "input": "$all_docs",
-                                    "as": "doc",
-                                    "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
-                                }
-                            },
-                            0
-                        ]
-                    }
-                }
-            },
-            {
-                "$project": {
-                    "occ_title": 1,
-                    "group": 1,
-                    "total_employment": "$max_emp",
-                    "a_median": "$selected_doc.a_median"
-                }
-            },
-            {
-                "$match": {
-                    "total_employment": {"$gt": 0}
-                }
-            }
-        ])
-        
-        # Add sorting based on criteria
         if by == "salary":
-            pipeline.append({"$match": {"a_median": {"$ne": None, "$gt": 0}}})
+            pipeline.extend([
+                {
+                    "$group": {
+                        "_id": "$occ_code",
+                        "occ_title": {"$first": "$occ_title"},
+                        "group": {"$first": "$group"},
+                        "max_emp": {"$max": "$tot_emp"},
+                        "max_a_median": {"$max": "$a_median"},
+                    }
+                },
+                {
+                    "$project": {
+                        "occ_title": 1,
+                        "group": 1,
+                        "total_employment": "$max_emp",
+                        "a_median": "$max_a_median",
+                    }
+                },
+                {
+                    "$match": {
+                        "total_employment": {"$gt": 0},
+                        "a_median": {"$ne": None, "$gt": 0},
+                    }
+                },
+            ])
             pipeline.append({"$sort": {"a_median": -1}})
         else:
+            pipeline.extend([
+                {
+                    "$group": {
+                        "_id": "$occ_code",
+                        "occ_title": {"$first": "$occ_title"},
+                        "group": {"$first": "$group"},
+                        "max_emp": {"$max": "$tot_emp"},
+                        "all_docs": {"$push": {
+                            "tot_emp": "$tot_emp",
+                            "a_median": "$a_median"
+                        }}
+                    }
+                },
+                {
+                    "$addFields": {
+                        "selected_doc": {
+                            "$arrayElemAt": [
+                                {
+                                    "$filter": {
+                                        "input": "$all_docs",
+                                        "as": "doc",
+                                        "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
+                                    }
+                                },
+                                0
+                            ]
+                        }
+                    }
+                },
+                {
+                    "$project": {
+                        "occ_title": 1,
+                        "group": 1,
+                        "total_employment": "$max_emp",
+                        "a_median": "$selected_doc.a_median"
+                    }
+                },
+                {
+                    "$match": {
+                        "total_employment": {"$gt": 0}
+                    }
+                }
+            ])
             pipeline.append({"$sort": {"total_employment": -1}})
         
         pipeline.append({"$limit": limit})
@@ -390,7 +434,8 @@ class JobsRepo:
             {
                 "$match": {
                     "occ_code": {"$in": occ_codes},
-                    "year": {"$in": years}
+                    "year": {"$in": years},
+                    "naics": "000000",
                 }
             },
             {
@@ -497,7 +542,8 @@ class JobsRepo:
             {
                 "$match": {
                     "occ_code": {"$in": occ_codes},
-                    "year": {"$in": years}
+                    "year": {"$in": years},
+                    "naics": "000000",
                 }
             },
             {

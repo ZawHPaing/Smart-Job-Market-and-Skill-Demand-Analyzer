@@ -1,6 +1,8 @@
 # app/api/crud/industries_repo.py
 from __future__ import annotations
 
+import asyncio
+import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Literal
 
@@ -84,6 +86,39 @@ class IndustryRepo:
 
     def __init__(self, db: "AgnosticDatabase"):
         self.db = db
+        self._onet_bls_codes_cache: Optional[set[str]] = None
+        self._onet_bls_codes_cache_time: float = 0.0
+
+    async def _get_onet_bls_codes(self, force_refresh: bool = False) -> set[str]:
+        """
+        Build cached set of BLS occ_code values that have O*NET detail.
+        Reads onet_soc from core O*NET collections and converts *.00 -> BLS format.
+        """
+        now = time.time()
+        if (
+            self._onet_bls_codes_cache is None
+            or force_refresh
+            or (now - self._onet_bls_codes_cache_time) > 300
+        ):
+            collections = ["skills", "technology_skills", "abilities", "knowledge", "work_activities"]
+            tasks = [self.db[c].distinct("onet_soc") for c in collections]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            codes: set[str] = set()
+            for res in results:
+                if isinstance(res, Exception):
+                    continue
+                for soc in res:
+                    if not isinstance(soc, str):
+                        continue
+                    code = soc.replace(".00", "").strip()
+                    if code:
+                        codes.add(code)
+
+            self._onet_bls_codes_cache = codes
+            self._onet_bls_codes_cache_time = now
+
+        return self._onet_bls_codes_cache or set()
 
     async def _latest_year(self) -> Optional[int]:
         doc = (
@@ -160,8 +195,12 @@ class IndustryRepo:
     # jobs (exclude 00-0000)
     # -------------------------
     async def jobs_in_industry(self, naics: str, year: int) -> List[Dict[str, Any]]:
+        onet_codes = await self._get_onet_bls_codes()
+        if not onet_codes:
+            return []
+
         cursor = self.db["bls_oews"].find(
-            {"year": int(year), "naics": naics, "occ_code": {"$ne": "00-0000"}},
+            {"year": int(year), "naics": naics, "occ_code": {"$in": list(onet_codes)}},
             {"occ_code": 1, "occ_title": 1, "tot_emp": 1, "a_median": 1, "naics_title": 1, "_id": 0},
         )
 
@@ -288,7 +327,13 @@ class IndustryRepo:
             emp_by_naics[naics] = _to_float(doc.get("tot_emp"))
             med_sal_by_naics[naics] = _to_float(doc.get("a_median"))
 
-        total_industries = len(emp_by_naics)
+        # Count unique industries by title (case-insensitive), excluding blanks.
+        unique_titles = {
+            str(title).strip().lower()
+            for title in title_by_naics.values()
+            if str(title).strip()
+        }
+        total_industries = len(unique_titles)
         total_employment = cross_total_employment
         median_industry_salary = cross_median_salary if cross_median_salary > 0 else _median(
             [v for v in med_sal_by_naics.values() if v > 0]

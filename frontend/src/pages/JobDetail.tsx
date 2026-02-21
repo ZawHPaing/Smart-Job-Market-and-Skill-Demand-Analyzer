@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { ChevronLeft, Briefcase } from 'lucide-react';
 import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
-import { HorizontalBarChart, MultiLineChart } from '@/components/charts';
+import { MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -31,6 +31,40 @@ const getSkillId = (skillName: string): string => {
     .replace(/_+/g, '_') // Replace multiple underscores with single
     .replace(/^_|_$/g, ''); // Remove leading/trailing underscores
 };
+
+function RankedLineBars({
+  data,
+  maxValue = 100,
+}: {
+  data: { name: string; value: number }[];
+  maxValue?: number;
+}) {
+  const safeMax = maxValue > 0 ? maxValue : 100;
+
+  return (
+    <div className="space-y-3">
+      {(data || []).map((item, index) => {
+        const width = Math.max(0, Math.min(100, (Number(item.value || 0) / safeMax) * 100));
+        return (
+          <div key={`${item.name}-${index}`} className="group">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium truncate max-w-[240px]" title={item.name}>
+                {item.name}
+              </span>
+              <span className="text-cyan font-medium text-sm">{fmtPercent(item.value)}</span>
+            </div>
+            <div className="relative h-6 bg-secondary/50 rounded-lg overflow-hidden">
+              <div
+                className="absolute inset-y-0 left-0 rounded-lg border-2 border-coral/60 bg-transparent transition-all duration-700 ease-out"
+                style={{ width: `${width}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -155,11 +189,13 @@ const JobDetail = () => {
   // Format skills for chart - show all skills but limit display to prevent overcrowding
   const jobSkills = useMemo(() => {
     if (!jobDetail?.skills) return [];
-    return jobDetail.skills.map(skill => ({
-      name: skill.name.length > 30 ? skill.name.substring(0, 30) + '...' : skill.name,
-      value: Math.round(skill.value),
-      type: skill.type,
-    }));
+    return jobDetail.skills
+      .filter((skill) => String(skill?.name || "").trim().length > 0)
+      .map((skill) => ({
+        name: skill.name.length > 30 ? skill.name.substring(0, 30) + "..." : skill.name,
+        value: Math.round(skill.value),
+        type: skill.type,
+      }));
   }, [jobDetail]);
 
   // Tech skills - all of them
@@ -171,10 +207,12 @@ const JobDetail = () => {
   // Activities - all of them
   const activities = useMemo(() => {
     if (!jobDetail?.activities) return [];
-    return jobDetail.activities.map(activity => ({
-      name: activity.name.length > 30 ? activity.name.substring(0, 30) + '...' : activity.name,
-      value: Math.round(activity.value),
-    }));
+    return jobDetail.activities
+      .filter((activity) => String(activity?.name || "").trim().length > 0)
+      .map((activity) => ({
+        name: activity.name.length > 30 ? activity.name.substring(0, 30) + "..." : activity.name,
+        value: Math.round(activity.value),
+      }));
   }, [jobDetail]);
 
   // Abilities - all of them
@@ -336,7 +374,7 @@ const JobDetail = () => {
         </Card>
 
         {/* Skills Section */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid items-start gap-6 lg:grid-cols-2">
           {/* Top Skills - SCROLLABLE */}
           <Card className="glass-card">
             <CardHeader>
@@ -365,12 +403,7 @@ const JobDetail = () => {
                       msOverflowStyle: 'auto',
                     }}
                   >
-                    <HorizontalBarChart
-                      data={jobSkills}
-                      formatValue={(v) => `${Math.round(v)}%`}
-                      primaryLabel="Importance"
-                      maxValue={100}
-                    />
+                    <RankedLineBars data={jobSkills} maxValue={100} />
                   </div>
                   <div className="text-xs text-muted-foreground mt-2 text-center border-t border-border/50 pt-2">
                     Showing all {jobSkills.length} skills
@@ -510,7 +543,7 @@ const JobDetail = () => {
         </div>
 
         {/* Activities & Abilities */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid items-start gap-6 lg:grid-cols-2">
           {/* Top Activities - SCROLLABLE */}
           <Card className="glass-card">
             <CardHeader>
@@ -529,12 +562,7 @@ const JobDetail = () => {
                       msOverflowStyle: 'auto',
                     }}
                   >
-                    <HorizontalBarChart
-                      data={activities}
-                      formatValue={(v) => `${Math.round(v)}%`}
-                      primaryLabel="Importance"
-                      maxValue={100}
-                    />
+                    <RankedLineBars data={activities} maxValue={100} />
                   </div>
                   <div className="text-xs text-muted-foreground mt-2 text-center border-t border-border/50 pt-2">
                     Showing all {activities.length} activities

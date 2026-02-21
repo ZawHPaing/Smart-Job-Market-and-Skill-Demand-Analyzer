@@ -18,12 +18,12 @@ const toNumber = (v: any): number => {
 
 const safeKey = (naics: string) => `i_${String(naics).replace(/[^a-zA-Z0-9]/g, "_")}`;
 
-// Deduplicate by NAICS code, keep first occurrence
+// Deduplicate by industry id (naics or id), keep first occurrence
 const dedupeByNaics = (arr: any[]) => {
   const seen = new Set<string>();
   const out: any[] = [];
   for (const it of arr || []) {
-    const k = String(it?.naics ?? "");
+    const k = String(it?.naics ?? it?.id ?? "");
     if (!k) continue;
     if (seen.has(k)) continue;
     seen.add(k);
@@ -271,6 +271,7 @@ export default function Home() {
     const src = dedupeByNaics(srcRaw);
     
     if (src.length === 0) return [];
+    const totalEmploymentBase = toNumber(metrics?.total_employment ?? metrics?.totalEmployment);
     
     // Sort by employment value descending
     const sorted = [...src].sort((a, b) => {
@@ -282,16 +283,19 @@ export default function Home() {
     // Take top 10 for individual display
     const top10 = sorted.slice(0, 10);
     
-    // Calculate total employment for all industries
-    const totalEmployment = sorted.reduce((sum, it) => 
-      sum + toNumber(it.total_employment ?? it.employment ?? it.tot_emp ?? it.value), 0
+    const top10Sum = top10.reduce(
+      (sum, it) => sum + toNumber(it.total_employment ?? it.employment ?? it.tot_emp ?? it.value),
+      0
     );
-    
-    // Calculate "Others" sum from remaining industries
+
+    // Calculate "Others" from the cross-industry total baseline when available.
+    // This keeps donut total aligned with the dashboard's cross-industry total.
     const remaining = sorted.slice(10);
-    const othersSum = remaining.reduce((sum, it) => 
+    const remainingSum = remaining.reduce((sum, it) => 
       sum + toNumber(it.total_employment ?? it.employment ?? it.tot_emp ?? it.value), 0
     );
+    const othersSum =
+      totalEmploymentBase > 0 ? Math.max(totalEmploymentBase - top10Sum, 0) : remainingSum;
     
     // Build chart data with top 10 + Others
     const chartData = top10
@@ -301,8 +305,8 @@ export default function Home() {
       }))
       .filter((x) => x.value > 0);
     
-    // Add Others category if there are remaining industries with positive values
-    if (remaining.length > 0 && othersSum > 0) {
+    // Add a single Others slice whenever baseline total implies remaining share.
+    if (othersSum > 0) {
       chartData.push({
         name: "Others",
         value: othersSum,
@@ -310,7 +314,7 @@ export default function Home() {
     }
     
     return chartData;
-  }, [topIndustries, industryList]);
+  }, [metrics, topIndustries, industryList]);
 
   // ✅ TOP 10 job titles by employment (cross-industry), with median salary
   const topJobChartData = useMemo(() => {
@@ -362,7 +366,8 @@ export default function Home() {
       },
       {
         title: "Overall Industry Trend",
-        value: `${growthPct.toFixed(1)}%`,
+        value: growthPct,
+        suffix: "%",
         trend: { value: Math.abs(growthPct), direction: growthDir },
         color: "green" as const,
       },
@@ -407,6 +412,7 @@ export default function Home() {
                   height={450} 
                   topListCount={10}
                   context="industry"
+                  totalOverride={toNumber(metrics?.total_employment ?? metrics?.totalEmployment)}
                 />
               )}
             </CardContent>
