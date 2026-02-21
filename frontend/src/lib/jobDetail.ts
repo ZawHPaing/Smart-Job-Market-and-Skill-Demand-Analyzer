@@ -55,6 +55,8 @@ export type JobEducation = {
   value: number;
 };
 
+// Add to JobDetailResponse type
+
 export type JobDetailResponse = {
   occ_code: string;
   occ_title: string;
@@ -70,6 +72,11 @@ export type JobDetailResponse = {
   tools: JobSkill[];
   work_activities: JobActivity[];
   related_occupations?: Array<{ soc_code: string; title: string }>;
+  industry?: {  // Add this
+    naics: string;
+    naics_title: string;
+    tot_emp: number;
+  };
 };
 
 export const JobDetailAPI = {

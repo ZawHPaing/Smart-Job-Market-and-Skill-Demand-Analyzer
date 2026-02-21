@@ -11,6 +11,8 @@ class JobBasicInfo(BaseModel):
     soc_code: Optional[str] = None
 
 
+# In job_detail_models.py, update the JobMetric class:
+
 class JobMetric(BaseModel):
     title: str
     value: float | str
@@ -18,7 +20,7 @@ class JobMetric(BaseModel):
     color: Optional[Literal["cyan", "coral", "purple", "green", "amber"]] = None
     prefix: Optional[str] = None
     suffix: Optional[str] = None
-    format: Optional[Literal["fmtK", "fmtM", "fmtPercent"]] = None
+    format: Optional[Literal["fmtK", "fmtM", "fmtPercent", "industry"]] = None  # Add "industry" here
 
 
 class JobSkill(BaseModel):
@@ -57,6 +59,8 @@ class JobEducation(BaseModel):
     value: float
 
 
+# Add to JobDetailResponse class
+
 class JobDetailResponse(BaseModel):
     occ_code: str
     occ_title: str
@@ -72,3 +76,6 @@ class JobDetailResponse(BaseModel):
     tools: List[JobSkill]
     work_activities: List[JobActivity]
     related_occupations: Optional[List[Dict[str, str]]] = None
+    industry: Optional[Dict[str, Any]] = None  # Add this field
+
+    

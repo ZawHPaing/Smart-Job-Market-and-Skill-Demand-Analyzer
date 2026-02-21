@@ -221,6 +221,77 @@ class JobDetailRepo:
         growth_pct = ((current_salary - prev_salary) / prev_salary) * 100
         return round(growth_pct, 1)
     
+    async def get_top_industry(self, occ_code: str, year: int) -> Optional[Dict[str, Any]]:
+        """
+        Get the top non-cross-industry industry for this occupation by total employment.
+        Uses MAX aggregation to find the document with highest tot_emp for each industry,
+        then selects the industry with highest employment excluding:
+        - "Cross-industry" (naics 000000)
+        - "Cross-industry, private ownership only" (naics 000001)
+        """
+        pipeline = [
+            {
+                "$match": {
+                    "occ_code": occ_code,
+                    "year": year,
+                    "naics": {"$nin": ["000000", "000001"]},  # Exclude both cross-industry codes
+                    "naics_title": {"$nin": ["Cross-industry", "Cross-industry, private ownership only"]}  # Also exclude by title for safety
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$naics",
+                    "naics_title": {"$first": "$naics_title"},
+                    "max_emp": {"$max": "$tot_emp"},
+                    "all_docs": {"$push": {
+                        "tot_emp": "$tot_emp",
+                        "naics_title": "$naics_title"
+                    }}
+                }
+            },
+            {
+                "$addFields": {
+                    "selected_doc": {
+                        "$arrayElemAt": [
+                            {
+                                "$filter": {
+                                    "input": "$all_docs",
+                                    "as": "doc",
+                                    "cond": {"$eq": ["$$doc.tot_emp", "$max_emp"]}
+                                }
+                            },
+                            0
+                        ]
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "naics": "$_id",
+                    "naics_title": 1,
+                    "tot_emp": "$max_emp"
+                }
+            },
+            {
+                "$sort": {"tot_emp": -1}
+            },
+            {
+                "$limit": 1
+            }
+        ]
+        
+        result = await self.db["bls_oews"].aggregate(pipeline).to_list(length=1)
+        
+        if result:
+            doc = result[0]
+            return {
+                "naics": doc.get("naics", ""),
+                "naics_title": str(doc.get("naics_title", "")),
+                "tot_emp": _to_float(doc.get("tot_emp", 0))
+            }
+        return None
+    
     # -------------------------
     # O*NET DATA METHODS
     # -------------------------
@@ -257,15 +328,6 @@ class JobDetailRepo:
                 return "None"
         
         return "Not specified"
-    
-    async def get_skill_intensity(self, onet_soc: str) -> float:
-        """Calculate average skill intensity (average of top skills)"""
-        skills = await self.get_skills(onet_soc)
-        if skills:
-            top_skills = skills[:10]
-            avg_value = sum(s["value"] for s in top_skills) / len(top_skills)
-            return round(avg_value / 10, 1)
-        return 0.0
     
     async def get_onet_soc(self, occ_code: str) -> Optional[str]:
         """Map BLS OCC code to O*NET SOC code format"""
@@ -555,12 +617,12 @@ class JobDetailRepo:
             self.get_work_activities(onet_soc),
         ]
         
-        # Fetch trend data in parallel
+        # Fetch trend data and industry in parallel
         trend_tasks = [
             self.get_job_growth_trend(occ_code),
             self.get_job_salary_trend(occ_code),
             self.get_experience_required(onet_soc),
-            self.get_skill_intensity(onet_soc)
+            self.get_top_industry(occ_code, year)  # Added industry
         ]
         
         # Wait for all data
@@ -568,7 +630,8 @@ class JobDetailRepo:
         trend_results = await asyncio.gather(*trend_tasks)
         
         skills, tech_skills, tools, abilities, knowledge, education, activities = onet_results
-        growth_trend, salary_trend, experience, skill_intensity = trend_results
+        # Unpack trend_results - now includes industry
+        growth_trend, salary_trend, experience, industry = trend_results
         
         # Categorize skills - soft skills should come from the top skills list
         all_skills = skills
@@ -628,10 +691,11 @@ class JobDetailRepo:
                     "color": "purple"
                 },
                 {
-                    "title": "Skill Intensity",
-                    "value": str(skill_intensity),
-                    "suffix": "/10",
-                    "color": "coral"
+                    "title": "Top Industry",
+                    "value": industry["naics_title"] if industry else "Various",  # Just the title, no code
+                    "color": "coral",
+                    "format": "industry"  # Keep the format for any special handling
+                    # Removed the suffix with NAICS code
                 },
                 {
                     "title": "Median Annual Salary",
@@ -654,7 +718,8 @@ class JobDetailRepo:
             "knowledge": knowledge,  # ← ALL knowledge, already sorted by value
             "education": education,
             "tools": tools,  # ← ALL tools, sorted alphabetically
-            "work_activities": activities  # ← ALL work activities, already sorted by value
+            "work_activities": activities,  # ← ALL work activities, already sorted by value
+            "industry": industry  # Add industry to the result
         })
         
         return result
