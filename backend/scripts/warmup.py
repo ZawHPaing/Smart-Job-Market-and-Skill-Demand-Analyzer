@@ -45,9 +45,9 @@ ENDPOINTS = [
     "/jobs/salary-distribution/2024",
     
     # Forecast endpoints
-    "/forecast/?year=2025",
-    "/forecast/industries?limit=6&forecast_years=4",
-    "/forecast/jobs?limit=8&forecast_years=4",
+    # "/forecast/?year=2025",
+    # "/forecast/industries?limit=6&forecast_years=4",
+    # "/forecast/jobs?limit=8&forecast_years=4",
     
     # Salary & Employment endpoints
     "/salary-employment/metrics?year=2024",

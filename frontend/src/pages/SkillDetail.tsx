@@ -1,11 +1,18 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Code, Briefcase, TrendingUp, Users, Calendar } from 'lucide-react';
+import { ChevronLeft, Code, Briefcase, TrendingUp, Users, Calendar, Filter, ArrowRight } from 'lucide-react';
 import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { DonutChart, SkillNetworkGraph } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SkillsAPI } from '@/lib/skills';
 import type { SkillDetailResponse, CoOccurringSkill } from '@/lib/skills';
 
@@ -13,12 +20,196 @@ import type { SkillDetailResponse, CoOccurringSkill } from '@/lib/skills';
 const fmtK = (n: number) => `${Math.round(n / 1000)}K`;
 const fmtNumber = (n: number) => n.toLocaleString();
 
+// Classification display names and colors - REMOVED 'general'
+const classificationConfig: Record<string, { name: string; color: string; badgeColor: string }> = {
+  'tech': { 
+    name: 'Technology Skills', 
+    color: 'from-cyan to-blue', 
+    badgeColor: 'bg-cyan/10 text-cyan border-cyan/20' 
+  },
+  'ability': { 
+    name: 'Abilities', 
+    color: 'from-purple to-pink', 
+    badgeColor: 'bg-purple/10 text-purple border-purple/20' 
+  },
+  'knowledge': { 
+    name: 'Knowledge Areas', 
+    color: 'from-amber to-orange', 
+    badgeColor: 'bg-amber/10 text-amber border-amber/20' 
+  },
+  'work_activity': { 
+    name: 'Work Activities', 
+    color: 'from-coral to-red', 
+    badgeColor: 'bg-coral/10 text-coral border-coral/20' 
+  },
+  'skill': { 
+    name: 'Skills', 
+    color: 'from-green to-emerald', 
+    badgeColor: 'bg-green/10 text-green border-green/20' 
+  },
+  'tool': { 
+    name: 'Tools', 
+    color: 'from-gray to-slate', 
+    badgeColor: 'bg-secondary/30 text-muted-foreground border-secondary/40' 
+  }
+};
+
+// List of tech skills that should NEVER appear in other categories
+const FORCE_TECH_SKILLS = new Set([
+  'c',
+  'c++',
+  'c#',
+  'java',
+  'python',
+  'javascript',
+  'typescript',
+  'rust',
+  'go',
+  'swift',
+  'kotlin',
+  'php',
+  'ruby',
+  'html',
+  'css',
+  'sql',
+  'mongodb',
+  'postgresql',
+  'mysql',
+  'react',
+  'angular',
+  'vue',
+  'node.js',
+  'express',
+  'django',
+  'flask',
+  'spring',
+  'asp.net',
+  'aws',
+  'azure',
+  'gcp',
+  'docker',
+  'kubernetes',
+  'terraform',
+  'git',
+  'github',
+  'gitlab',
+  'jenkins',
+  'jira',
+  'confluence'
+]);
+
+// Helper function to get badge color based on skill type
+const getSkillTypeBadgeColor = (type: string, isSameType: boolean = false): string => {
+  if (isSameType) return 'bg-cyan/20 text-cyan border-cyan/30 font-semibold';
+  return classificationConfig[type]?.badgeColor || 'bg-purple/10 text-purple border-purple/20';
+};
+
+// Helper function to get progress bar color based on skill type and value
+const getProgressColor = (skill: CoOccurringSkill): string => {
+  if (skill.type === 'tech') {
+    if (skill.hot_technology && skill.in_demand) return 'bg-purple';
+    if (skill.hot_technology) return 'bg-cyan';
+    if (skill.in_demand) return 'bg-green';
+    return 'bg-amber';
+  }
+  
+  switch(skill.type) {
+    case 'ability': return 'bg-purple';
+    case 'knowledge': return 'bg-amber';
+    case 'work_activity': return 'bg-coral';
+    case 'skill': return 'bg-green';
+    case 'tool': return 'bg-gray';
+    default: return 'bg-cyan';
+  }
+};
+
+// Helper function to get value color based on skill type
+const getValueColor = (skill: CoOccurringSkill): string => {
+  if (skill.type === 'tech') {
+    if (skill.hot_technology && skill.in_demand) return 'text-purple';
+    if (skill.hot_technology) return 'text-cyan';
+    if (skill.in_demand) return 'text-green';
+    return 'text-amber';
+  }
+  
+  switch(skill.type) {
+    case 'ability': return 'text-purple';
+    case 'knowledge': return 'text-amber';
+    case 'work_activity': return 'text-coral';
+    case 'skill': return 'text-green';
+    case 'tool': return 'text-gray';
+    default: return 'text-cyan';
+  }
+};
+
+// Helper function to calculate a composite score for sorting
+const getCompositeScore = (skill: CoOccurringSkill): number => {
+  if (skill.type === 'tech') {
+    // For tech skills: prioritize hot_technology and in_demand
+    let score = skill.co_occurrence_rate || 0;
+    if (skill.hot_technology) score += 100;
+    if (skill.in_demand) score += 50;
+    return score;
+  } else {
+    // For other skills: use importance and level
+    const importanceScore = (skill.avg_importance || 0) * 2;
+    const levelScore = (skill.avg_level || 0);
+    return (skill.co_occurrence_rate || 0) + importanceScore + levelScore;
+  }
+};
+
+// Helper function to clean and deduplicate skills
+const cleanAndDeduplicateSkills = (skills: CoOccurringSkill[]): CoOccurringSkill[] => {
+  // First, remove any 'general' category skills
+  let cleaned = skills.filter(skill => skill.type !== 'general');
+  
+  // Force correct categorization for known tech skills
+  cleaned = cleaned.map(skill => {
+    const skillName = skill.name.toLowerCase();
+    if (FORCE_TECH_SKILLS.has(skillName)) {
+      return { ...skill, type: 'tech' };
+    }
+    return skill;
+  });
+  
+  // Deduplicate by name, keeping the best version
+  const seen = new Map<string, CoOccurringSkill>();
+  
+  cleaned.forEach(skill => {
+    const key = skill.name.toLowerCase();
+    const existing = seen.get(key);
+    
+    // If we haven't seen this skill, add it
+    if (!existing) {
+      seen.set(key, skill);
+    } else {
+      // If we have seen it, keep the one with higher co-occurrence rate
+      // and prefer tech category for tech skills
+      const existingScore = existing.co_occurrence_rate || 0;
+      const newScore = skill.co_occurrence_rate || 0;
+      
+      // If the new one has a higher score, replace
+      if (newScore > existingScore) {
+        seen.set(key, skill);
+      } 
+      // If scores are equal or new is lower, but new is tech and existing isn't, replace
+      else if (skill.type === 'tech' && existing.type !== 'tech') {
+        seen.set(key, skill);
+      }
+    }
+  });
+  
+  return Array.from(seen.values());
+};
+
 const SkillDetail = () => {
   const { id } = useParams<{ id: string }>();
   const { year } = useYear();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [skillDetail, setSkillDetail] = useState<SkillDetailResponse | null>(null);
+  const [networkFilter, setNetworkFilter] = useState<string>('same');
+  const [nextSkillsFilter, setNextSkillsFilter] = useState<string>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -37,7 +228,26 @@ const SkillDetail = () => {
         console.log(`🔍 Fetching skill detail for ID: ${id} with year: ${year}`);
         const data = await SkillsAPI.getDetail(id, year);
         if (cancelled) return;
-        console.log('✅ Skill detail received:', data);
+        
+        // Clean and deduplicate co-occurring skills
+        if (data.co_occurring_skills) {
+          const originalCount = data.co_occurring_skills.length;
+          const originalByType: Record<string, number> = {};
+          data.co_occurring_skills.forEach(s => {
+            originalByType[s.type] = (originalByType[s.type] || 0) + 1;
+          });
+          console.log('📊 Original skills by type:', originalByType);
+          
+          data.co_occurring_skills = cleanAndDeduplicateSkills(data.co_occurring_skills);
+          
+          const cleanedByType: Record<string, number> = {};
+          data.co_occurring_skills.forEach(s => {
+            cleanedByType[s.type] = (cleanedByType[s.type] || 0) + 1;
+          });
+          console.log(`📊 Cleaned skills: ${originalCount} -> ${data.co_occurring_skills.length}`);
+          console.log('📊 Cleaned skills by type:', cleanedByType);
+        }
+        
         setSkillDetail(data);
       } catch (e: any) {
         console.error('❌ Skill detail error:', e);
@@ -52,32 +262,6 @@ const SkillDetail = () => {
     loadSkillDetail();
     return () => { cancelled = true; };
   }, [id, year]);
-
-  // Debug effect to log co-occurring skills data
-  useEffect(() => {
-    if (skillDetail) {
-      console.log('=== SKILL DETAIL DEBUG ===');
-      console.log('Skill name:', skillDetail.basic_info.skill_name);
-      console.log('Skill type:', skillDetail.basic_info.skill_type);
-      console.log('Year:', skillDetail.year);
-      console.log('Total jobs count:', skillDetail.total_jobs_count);
-      console.log('Usage percentage:', skillDetail.usage_percentage);
-      
-      console.log('\n📊 CO-OCCURRING SKILLS:');
-      console.log('Array length:', skillDetail.co_occurring_skills?.length || 0);
-      
-      console.log('\n📈 METRICS:');
-      console.log(skillDetail.metrics);
-      
-      console.log('\n🔗 NETWORK GRAPH:');
-      console.log(skillDetail.network_graph);
-      
-      console.log('\n💼 TOP JOBS:');
-      console.log(skillDetail.top_jobs?.slice(0, 3));
-      
-      console.log('========================\n');
-    }
-  }, [skillDetail]);
 
   // Transform metrics for MetricsGrid
   const metricsGridData = useMemo(() => {
@@ -111,6 +295,47 @@ const SkillDetail = () => {
     { name: 'Jobs Not Requiring', value: 100 }
   ];
 
+  // Get unique skill types from co-occurring skills (after cleaning, excluding 'general')
+  const availableTypes = useMemo(() => {
+    if (!skillDetail?.co_occurring_skills) return [];
+    
+    const types = new Set<string>();
+    skillDetail.co_occurring_skills.forEach(skill => {
+      if (skill.type !== 'general') {
+        types.add(skill.type);
+      }
+    });
+    
+    return Array.from(types).sort();
+  }, [skillDetail]);
+
+  // Filter co-occurring skills for network graph based on selected filter
+  const filteredNetworkSkills = useMemo(() => {
+    if (!skillDetail?.co_occurring_skills) return [];
+    
+    const currentType = skillDetail.basic_info.skill_type;
+    
+    let filtered = [];
+    if (networkFilter === 'same') {
+      // Only skills of the same type as current skill
+      filtered = skillDetail.co_occurring_skills.filter(
+        skill => skill.type === currentType
+      );
+    } else {
+      // Skills of the selected type
+      filtered = skillDetail.co_occurring_skills.filter(
+        skill => skill.type === networkFilter
+      );
+    }
+    
+    // Sort by co-occurrence rate and take top 10 for network graph
+    const top10 = [...filtered]
+      .sort((a, b) => (b.co_occurrence_rate || 0) - (a.co_occurrence_rate || 0))
+      .slice(0, 10);
+    
+    return top10;
+  }, [skillDetail, networkFilter]);
+
   // Prepare network graph data
   const networkData = useMemo(() => {
     if (!skillDetail) {
@@ -125,47 +350,86 @@ const SkillDetail = () => {
       };
     }
     
-    // Use network_graph if available from API
-    if (skillDetail.network_graph) {
-      return skillDetail.network_graph;
-    }
+    const mainSkillId = skillDetail.basic_info.skill_id;
+    const mainSkillName = skillDetail.basic_info.skill_name;
     
-    // Fallback to old format
-    return {
-      nodes: [
-        { 
-          id: skillDetail.basic_info.skill_id, 
-          name: skillDetail.basic_info.skill_name, 
-          group: '1',
-          value: 30
-        },
-        ...skillDetail.co_occurring_skills.slice(0, 10).map((s, i) => ({
-          id: s.id,
-          name: s.name.length > 20 ? s.name.substring(0, 20) + '...' : s.name,
-          group: '2',
-          value: 25 - (i * 1.5)
-        }))
-      ],
-      links: skillDetail.co_occurring_skills.slice(0, 10).map(s => ({
-        source: skillDetail.basic_info.skill_id,
-        target: s.id,
-        value: s.co_occurrence_rate || 50
-      }))
-    };
-  }, [skillDetail, id]);
+    // Use filtered skills for network graph
+    const skillsForNetwork = filteredNetworkSkills;
+    
+    // Create nodes array
+    const nodes = [
+      { 
+        id: mainSkillId, 
+        name: mainSkillName, 
+        group: '1',
+        value: 30,
+        usage_count: undefined,
+        co_occurrence_rate: undefined,
+        avg_importance: undefined,
+        avg_level: undefined
+      }
+    ];
+    
+    // Add co-occurring skill nodes
+    skillsForNetwork.forEach((skill, i) => {
+      nodes.push({
+        id: skill.id,
+        name: skill.name.length > 20 ? skill.name.substring(0, 20) + '...' : skill.name,
+        group: '2',
+        value: 25 - (i * 1.5),
+        usage_count: skill.usage_count,
+        co_occurrence_rate: skill.co_occurrence_rate,
+        avg_importance: skill.avg_importance,
+        avg_level: skill.avg_level
+      });
+    });
+    
+    // Create links
+    const links = skillsForNetwork.map(skill => ({
+      source: mainSkillId,
+      target: skill.id,
+      value: (skill.co_occurrence_rate || 50) / 10,
+      co_occurrence_rate: skill.co_occurrence_rate
+    }));
+    
+    return { nodes, links };
+  }, [skillDetail, filteredNetworkSkills, id]);
 
-  // Get top co-occurring skills for "What to Learn Next"
-  const nextSkills = useMemo(() => {
-    if (!skillDetail?.co_occurring_skills) {
-      return [];
+  // Filter skills for "What to Learn Next" based on selected filter
+  const filteredNextSkills = useMemo(() => {
+    if (!skillDetail?.co_occurring_skills) return [];
+    
+    let filtered = [];
+    if (nextSkillsFilter === 'all') {
+      filtered = skillDetail.co_occurring_skills;
+    } else {
+      filtered = skillDetail.co_occurring_skills.filter(
+        skill => skill.type === nextSkillsFilter
+      );
     }
     
-    const sorted = [...skillDetail.co_occurring_skills]
-      .sort((a, b) => (b.co_occurrence_rate || 0) - (a.co_occurrence_rate || 0))
-      .slice(0, 4);
+    // Sort using composite score
+    const sorted = [...filtered].sort((a, b) => {
+      const scoreA = getCompositeScore(a);
+      const scoreB = getCompositeScore(b);
+      return scoreB - scoreA;
+    });
     
     return sorted;
-  }, [skillDetail]);
+  }, [skillDetail, nextSkillsFilter]);
+
+  // Sort jobs by employment (highest first)
+  const sortedJobs = useMemo(() => {
+    if (!skillDetail?.top_jobs) return [];
+    
+    const sorted = [...skillDetail.top_jobs].sort((a, b) => {
+      const empA = a.employment ? Number(a.employment) : 0;
+      const empB = b.employment ? Number(b.employment) : 0;
+      return empB - empA;
+    });
+    
+    return sorted;
+  }, [skillDetail?.top_jobs]);
 
   if (loading) {
     return (
@@ -303,149 +567,245 @@ const SkillDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Co-Occurring Skills Network */}
+          {/* Co-Occurring Skills Network - WITH FILTER */}
           <Card className="glass-card">
             <CardHeader>
-              <SectionHeader
-                title="Co-Occurring Skills Network"
-                subtitle="Top 10 skills most frequently paired with this one"
-              />
+              <div className="flex items-center justify-between">
+                <SectionHeader
+                  title="Co-Occurring Skills Network"
+                  subtitle={`Top 10 ${networkFilter === 'same' 
+                    ? classificationConfig[skillDetail.basic_info.skill_type]?.name.toLowerCase() 
+                    : classificationConfig[networkFilter]?.name.toLowerCase() || 'skills'} most frequently paired`}
+                />
+                {availableTypes.length > 0 && (
+                  <Select value={networkFilter} onValueChange={setNetworkFilter}>
+                    <SelectTrigger className="w-[180px] bg-secondary/50">
+                      <Filter className="h-3 w-3 mr-2" />
+                      <SelectValue placeholder="Filter by type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="same">
+                        Same Type ({classificationConfig[skillDetail.basic_info.skill_type]?.name})
+                      </SelectItem>
+                      {availableTypes.map(type => (
+                        <SelectItem key={type} value={type}>
+                          {classificationConfig[type]?.name || type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="flex justify-center">
               {networkData.nodes.length > 1 ? (
-                <SkillNetworkGraph
-                  nodes={networkData.nodes}
-                  links={networkData.links}
-                  centerNode={skillDetail.basic_info.skill_id}
-                  width={380}
-                  height={380}
-                />
+                <>
+                  <SkillNetworkGraph
+                    nodes={networkData.nodes}
+                    links={networkData.links}
+                    centerNode={skillDetail.basic_info.skill_id}
+                    width={380}
+                    height={380}
+                  />
+                  {filteredNetworkSkills.length < 10 && (
+                    <div className="text-xs text-amber mt-2">
+                      Only showing {filteredNetworkSkills.length} available skills of this type
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-muted-foreground text-center py-8">
-                  No co-occurring skills data available
+                  No co-occurring skills of this type found
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* What to Learn Next - CONDITIONAL DISPLAY FOR TECH VS OTHER SKILLS */}
-        {nextSkills.length > 0 ? (
+        {/* What to Learn Next - SIDESCROLL WITH FILTER */}
+        {filteredNextSkills.length > 0 ? (
           <Card className="glass-card">
             <CardHeader>
-              <SectionHeader
-                title="What Skills to Learn Next?"
-                subtitle="Top 4 skills most commonly paired with this one"
-              />
+              <div className="flex items-center justify-between">
+                <div>
+                  <SectionHeader
+                    title="What Skills to Learn Next?"
+                    subtitle={`${filteredNextSkills.length} related skills${
+                      nextSkillsFilter !== 'all' 
+                        ? ` (${classificationConfig[nextSkillsFilter]?.name.toLowerCase()})` 
+                        : ''
+                    }`}
+                  />
+                </div>
+                {availableTypes.length > 0 && (
+                  <Select value={nextSkillsFilter} onValueChange={setNextSkillsFilter}>
+                    <SelectTrigger className="w-[180px] bg-secondary/50">
+                      <Filter className="h-3 w-3 mr-2" />
+                      <SelectValue placeholder="Filter by type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Types</SelectItem>
+                      {availableTypes.map(type => (
+                        <SelectItem key={type} value={type}>
+                          {classificationConfig[type]?.name || type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {nextSkills.map((skill) => (
-                  <Link
-                    key={skill.id}
-                    to={`/skills/${skill.id}`}
-                    className="group p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-cyan/30 transition-all"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan/20 to-purple/20">
-                        {skill.type === 'tech' ? (
-                          <Code className="h-5 w-5 text-cyan" />
-                        ) : (
-                          <Briefcase className="h-5 w-5 text-purple" />
-                        )}
-                      </div>
-                      <Badge
-                        variant="secondary"
-                        className={`text-xs ${
-                          skill.type === 'tech' ? 'bg-cyan/10 text-cyan border-cyan/20' : 
-                          skill.type === 'soft' ? 'bg-green/10 text-green border-green/20' : 
-                          'bg-purple/10 text-purple border-purple/20'
-                        }`}
-                      >
-                        {skill.type || 'general'}
-                      </Badge>
-                    </div>
-                    <h4 className="mt-3 font-medium group-hover:text-cyan transition-colors line-clamp-1">
-                      {skill.name}
-                    </h4>
+              {/* Legend for tech skills */}
+              {nextSkillsFilter === 'tech' && (
+                <div className="flex flex-wrap gap-3 mb-4 text-xs">
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 rounded-full bg-purple"></div>
+                    <span>🔥 Hot + 📈 Demand (Top Priority)</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 rounded-full bg-cyan"></div>
+                    <span>🔥 Hot Technology</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 rounded-full bg-green"></div>
+                    <span>📈 In Demand</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-3 h-3 rounded-full bg-amber"></div>
+                    <span>Standard</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Horizontal scrollable container */}
+              <div className="relative">
+                <div 
+                  className="flex overflow-x-auto gap-4 pb-4 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                  style={{
+                    scrollbarWidth: 'thin',
+                    msOverflowStyle: 'auto',
+                    WebkitOverflowScrolling: 'touch',
+                  }}
+                >
+                  {filteredNextSkills.map((skill) => {
+                    const isSameType = skill.type === skillDetail.basic_info.skill_type;
+                    const progressColor = getProgressColor(skill);
+                    const valueColor = getValueColor(skill);
                     
-                    {/* Co-occurrence rate with progress bar */}
-                    <div className="mt-3 space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Co-occurrence</span>
-                        <span className="font-medium text-cyan">
-                          {skill.co_occurrence_rate ? skill.co_occurrence_rate.toFixed(1) : '0'}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-secondary/50 rounded-full h-1.5">
-                        <div 
-                          className="bg-cyan rounded-full h-1.5 transition-all group-hover:bg-cyan/80" 
-                          style={{ width: `${Math.min(100, skill.co_occurrence_rate || 0)}%` }}
-                        />
-                      </div>
+                    return (
+                      <Link
+                        key={`${skill.id}-${skill.type}-${skill.name}`} // More unique key
+                        to={`/skills/${skill.id}`}
+                        className="flex-none w-[280px] group p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-cyan/30 transition-all"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan/20 to-purple/20">
+                            {skill.type === 'tech' ? (
+                              <Code className="h-5 w-5 text-cyan" />
+                            ) : (
+                              <Briefcase className="h-5 w-5 text-purple" />
+                            )}
+                          </div>
+                          <Badge
+                            variant="secondary"
+                            className={`text-xs ${getSkillTypeBadgeColor(skill.type, isSameType)}`}
+                          >
+                            {isSameType ? `★ ${skill.type}` : skill.type}
+                          </Badge>
+                        </div>
+                        
+                        <h4 className="mt-3 font-medium group-hover:text-cyan transition-colors line-clamp-2 min-h-[3rem]">
+                          {skill.name}
+                        </h4>
+                        
+                        {/* Co-occurrence rate */}
+                        <div className="mt-2 space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Co-occurrence</span>
+                            <span className={`font-medium ${valueColor}`}>
+                              {skill.co_occurrence_rate ? skill.co_occurrence_rate.toFixed(1) : '0'}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-secondary/50 rounded-full h-1.5">
+                            <div 
+                              className={`rounded-full h-1.5 transition-all ${progressColor} group-hover:opacity-80`}
+                              style={{ width: `${Math.min(100, skill.co_occurrence_rate || 0)}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Type-specific metrics */}
+                        {skill.type === 'tech' ? (
+                          // Tech skills show badges
+                          <div className="mt-3 flex flex-wrap gap-1">
+                            {skill.hot_technology && (
+                              <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
+                                🔥 Hot
+                              </Badge>
+                            )}
+                            {skill.in_demand && (
+                              <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
+                                📈 Demand
+                              </Badge>
+                            )}
+                          </div>
+                        ) : skill.type === 'tool' ? (
+                          // Tools show minimal info
+                          <div className="mt-3 text-xs text-muted-foreground">
+                            {skill.usage_count ? (
+                              <span>{skill.usage_count.toLocaleString()} jobs</span>
+                            ) : (
+                              <span>&nbsp;</span>
+                            )}
+                          </div>
+                        ) : (
+                          // Other skills show importance and level
+                          <div className="mt-3 space-y-2">
+                            {skill.avg_importance && skill.avg_importance > 0 && (
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">Importance</span>
+                                <span className="text-purple font-medium">
+                                  {Math.round(skill.avg_importance)}%
+                                </span>
+                              </div>
+                            )}
+                            {skill.avg_level && skill.avg_level > 0 && (
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-muted-foreground">Proficiency</span>
+                                <span className="text-coral font-medium">
+                                  {Math.round(skill.avg_level)}%
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Job count */}
+                        {(skill.usage_count || skill.frequency) && (
+                          <div className="mt-3 flex items-center gap-1 text-xs text-muted-foreground border-t border-border/50 pt-2">
+                            <Users className="h-3 w-3" />
+                            <span>{(skill.usage_count || skill.frequency || 0).toLocaleString()} jobs</span>
+                          </div>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+                
+                {/* Scroll hint */}
+                {filteredNextSkills.length > 3 && (
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <div className="bg-gradient-to-l from-background to-transparent w-12 h-full flex items-center justify-end pr-2">
+                      <ArrowRight className="h-5 w-5 text-muted-foreground animate-pulse" />
                     </div>
-
-                    {/* EXACT JOB COUNT */}
-                    {skill.usage_count ? (
-                      <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-                        <Users className="h-3 w-3" />
-                        <span>{skill.usage_count.toLocaleString()} jobs</span>
-                      </div>
-                    ) : skill.frequency ? (
-                      <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-                        <Users className="h-3 w-3" />
-                        <span>{skill.frequency.toLocaleString()} jobs</span>
-                      </div>
-                    ) : null}
-
-                    {/* CONDITIONAL DISPLAY - TECH SKILLS SHOW BADGES, OTHERS SHOW IMPORTANCE */}
-                    {skill.type === 'tech' ? (
-                      // For tech skills, show hot/in demand badges
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {skill.hot_technology ? (
-                          <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
-                            🔥 Hot Technology
-                          </Badge>
-                        ) : null}
-                        {skill.in_demand ? (
-                          <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
-                            📈 In Demand
-                          </Badge>
-                        ) : null}
-                        {/* If neither flag is true, show a placeholder to maintain height consistency */}
-                        {!skill.hot_technology && !skill.in_demand && (
-                          <div className="h-5"></div>
-                        )}
-                      </div>
-                    ) : skill.type === 'tool' ? (
-                      // For tools, show minimal info or nothing
-                      <div className="mt-2 h-5"></div>
-                    ) : (
-                      // For all other skills (ability, knowledge, work_activity, etc.), show importance and level
-                      <div className="mt-2 space-y-1">
-                        {skill.avg_importance && skill.avg_importance > 0 && (
-                          <div className="flex items-center gap-1 text-xs">
-                            <TrendingUp className="h-3 w-3 text-purple" />
-                            <span className="text-muted-foreground">Importance:</span>
-                            <span className="text-purple font-medium">{Math.round(skill.avg_importance)}%</span>
-                          </div>
-                        )}
-                        {skill.avg_level && skill.avg_level > 0 && (
-                          <div className="flex items-center gap-1 text-xs">
-                            <Briefcase className="h-3 w-3 text-coral" />
-                            <span className="text-muted-foreground">Proficiency:</span>
-                            <span className="text-coral font-medium">{Math.round(skill.avg_level)}%</span>
-                          </div>
-                        )}
-                        {/* If no importance/level data, show placeholder */}
-                        {(!skill.avg_importance || skill.avg_importance <= 0) && 
-                         (!skill.avg_level || skill.avg_level <= 0) && (
-                          <div className="h-5"></div>
-                        )}
-                      </div>
-                    )}
-                  </Link>
-                ))}
+                  </div>
+                )}
+              </div>
+              
+              {/* Count indicator */}
+              <div className="mt-3 text-xs text-muted-foreground text-right border-t border-border/50 pt-2">
+                Showing {filteredNextSkills.length} unique skills • Scroll for more
               </div>
             </CardContent>
           </Card>
@@ -454,7 +814,7 @@ const SkillDetail = () => {
             <CardHeader>
               <SectionHeader
                 title="What Skills to Learn Next?"
-                subtitle="No co-occurring skills data available"
+                subtitle="No related skills found"
               />
             </CardHeader>
             <CardContent className="text-center text-muted-foreground py-4">
@@ -464,108 +824,85 @@ const SkillDetail = () => {
         )}
 
         {/* Top Jobs Using This Skill */}
-        {skillDetail.top_jobs && skillDetail.top_jobs.length > 0 && (
+        {sortedJobs.length > 0 && (
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
                 title={`Top Jobs Using This Skill (${skillDetail.year || year})`}
-                subtitle="Roles where this skill is most important"
+                subtitle={`${sortedJobs.length} jobs sorted by total employment (highest first)`}
               />
             </CardHeader>
             <CardContent>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {skillDetail.top_jobs.slice(0, 6).map((job) => (
-                  <Link
-                    key={job.soc_code}
-                    to={`/jobs/${job.soc_code.replace('.00', '')}`}
-                    className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors group"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium group-hover:text-cyan transition-colors truncate">
-                        {job.title}
-                      </p>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>Importance: {Math.round(job.importance || 0)}%</span>
-                        {job.level && (
-                          <>
-                            <span>•</span>
-                            <span>Level: {Math.round(job.level)}%</span>
-                          </>
+              {/* Scrollable container for all jobs */}
+              <div 
+                className="max-h-[600px] overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                style={{
+                  scrollbarWidth: 'thin',
+                  msOverflowStyle: 'auto',
+                }}
+              >
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {sortedJobs.map((job) => (
+                    <Link
+                      key={job.soc_code}
+                      to={`/jobs/${job.soc_code.replace('.00', '')}`}
+                      className="block p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors group"
+                    >
+                      <div className="space-y-2">
+                        {/* Job Title */}
+                        <p className="font-medium group-hover:text-cyan transition-colors line-clamp-2 min-h-[3rem]">
+                          {job.title}
+                        </p>
+                        
+                        {/* Employment */}
+                        {job.employment ? (
+                          <div className="flex items-center gap-2">
+                            <Users className="h-4 w-4 text-cyan" />
+                            <div>
+                              <span className="text-lg font-semibold text-cyan">
+                                {Number(job.employment).toLocaleString()}
+                              </span>
+                              <span className="text-xs text-muted-foreground ml-1">employed</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Users className="h-4 w-4" />
+                            <span className="text-sm">Employment data unavailable</span>
+                          </div>
                         )}
+                        
+                        {/* Salary */}
+                        {job.median_salary ? (
+                          <div className="flex items-center gap-2">
+                            <Briefcase className="h-4 w-4 text-purple" />
+                            <div>
+                              <span className="text-base font-medium text-purple">
+                                ${(Number(job.median_salary) / 1000).toFixed(0)}K
+                              </span>
+                              <span className="text-xs text-muted-foreground ml-1">median salary</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <Briefcase className="h-4 w-4" />
+                            <span className="text-sm">Salary data unavailable</span>
+                          </div>
+                        )}
+                        
+                        {/* Year indicator */}
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Data from {skillDetail.year || year}
+                        </div>
                       </div>
-                      {/* Show salary if available for the selected year */}
-                      {job.median_salary ? (
-                        <div className="text-sm mt-1">
-                          <span className="text-cyan font-medium">
-                            ${(job.median_salary / 1000).toFixed(0)}K
-                          </span>
-                          <span className="text-xs text-muted-foreground ml-1">
-                            ({skillDetail.year || year})
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="text-sm text-muted-foreground mt-1">
-                          Salary data unavailable for {skillDetail.year || year}
-                        </div>
-                      )}
-                      {/* Show tech flags for jobs if they exist */}
-                      {(job.hot_technology || job.in_demand) && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {job.hot_technology && (
-                            <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
-                              🔥 Hot Tech
-                            </Badge>
-                          )}
-                          {job.in_demand && (
-                            <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
-                              📈 In Demand
-                            </Badge>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  ))}
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Debug Info - Only in development */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="glass-card border-amber/30">
-            <CardHeader>
-              <SectionHeader title="Debug Info" subtitle="Remove in production" />
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <p className="text-xs">
-                  <span className="font-bold">Skill ID:</span> {skillDetail.basic_info.skill_id}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Skill Name:</span> {skillDetail.basic_info.skill_name}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Type:</span> {skillDetail.basic_info.skill_type}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Year:</span> {skillDetail.year || year}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Co-occurring Skills:</span> {skillDetail.co_occurring_skills.length}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Network Graph Nodes:</span> {networkData.nodes.length}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Network Graph Links:</span> {networkData.links.length}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Top Jobs:</span> {skillDetail.top_jobs.length}
-                </p>
-                <p className="text-xs">
-                  <span className="font-bold">Usage Percentage:</span> {skillDetail.usage_percentage}%
-                </p>
+              
+              {/* Job count indicator */}
+              <div className="mt-3 text-xs text-muted-foreground text-right border-t border-border/50 pt-2">
+                Showing all {sortedJobs.length} jobs that require this skill
               </div>
             </CardContent>
           </Card>

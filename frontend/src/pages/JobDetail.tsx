@@ -96,7 +96,13 @@ const JobDetail = () => {
         }
 
         console.log('🟢 Job detail loaded:', data);
+        console.log('🟢 Skills count:', data.skills?.length);
+        console.log('🟢 Tech skills count:', data.tech_skills?.length);
+        console.log('🟢 Soft skills count:', data.soft_skills?.length);
+        console.log('🟢 Activities count:', data.activities?.length);
+        console.log('🟢 Abilities count:', data.abilities?.length);
         console.log('🟢 Knowledge count:', data.knowledge?.length);
+        console.log('🟢 Tools count:', data.tools?.length);
       } catch (e: any) {
         if (cancelled) return;
         console.error('🔴 Job detail error:', e);
@@ -113,60 +119,69 @@ const JobDetail = () => {
 
   // Transform metrics for MetricsGrid component
   const metricsGridData = useMemo(() => {
-    if (!jobDetail?.metrics) return [];
+  if (!jobDetail?.metrics) return [];
+  
+  return jobDetail.metrics.map((metric: JobMetric) => {
+    let formattedValue = metric.value;
+    let shouldUseCustomFormatting = false;
     
-    return jobDetail.metrics.map((metric: JobMetric) => {
-      let formattedValue = metric.value;
-      if (metric.format === 'fmtK' && typeof metric.value === 'number') {
-        formattedValue = fmtK(metric.value);
-      } else if (metric.format === 'fmtPercent' && typeof metric.value === 'number') {
-        formattedValue = fmtPercent(metric.value);
-      }
-      
-      return {
-        title: metric.title,
-        value: formattedValue,
-        prefix: metric.prefix,
-        suffix: metric.suffix,
-        trend: metric.trend ? {
-          value: Math.abs(metric.trend.value),
-          direction: metric.trend.direction as "up" | "down" | "neutral"
-        } : undefined,
-        color: metric.color || 'cyan'
-      };
-    });
-  }, [jobDetail]);
+    // Handle different format types
+    if (metric.format === 'fmtK' && typeof metric.value === 'number') {
+      // For fmtK, we want to pass the raw number and let MetricCard format it with K
+      // But we need to ensure it's a number, not a string
+      formattedValue = metric.value; // Keep as raw number
+      shouldUseCustomFormatting = true;
+    } else if (metric.format === 'fmtPercent' && typeof metric.value === 'number') {
+      formattedValue = Math.round(metric.value) + '%';
+    } else if (metric.format === 'fmtM' && typeof metric.value === 'number') {
+      formattedValue = metric.value; // Keep as raw number for M formatting
+      shouldUseCustomFormatting = true;
+    }
+    
+    return {
+      title: metric.title,
+      value: formattedValue,
+      prefix: metric.prefix,
+      suffix: shouldUseCustomFormatting ? '' : metric.suffix, // Remove suffix for formatted values
+      trend: metric.trend ? {
+        value: Math.abs(metric.trend.value),
+        direction: metric.trend.direction as "up" | "down" | "neutral"
+      } : undefined,
+      color: metric.color || 'cyan'
+    };
+  });
+}, [jobDetail]);
 
-  // Format skills for chart - get 10 items
+  // Format skills for chart - show all skills but limit display to prevent overcrowding
   const jobSkills = useMemo(() => {
     if (!jobDetail?.skills) return [];
-    return jobDetail.skills.slice(0, 10).map(skill => ({
+    return jobDetail.skills.map(skill => ({
       name: skill.name.length > 30 ? skill.name.substring(0, 30) + '...' : skill.name,
       value: Math.round(skill.value),
       type: skill.type,
     }));
   }, [jobDetail]);
 
-  // Tech and soft skills - get 10 each
-  const techSkills = jobDetail?.tech_skills?.slice(0, 10) || [];
+  // Tech skills - all of them
+  const techSkills = jobDetail?.tech_skills || [];
   
-  // Soft skills now come from the skills list (already filtered in backend)
-  const softSkills = jobDetail?.soft_skills?.slice(0, 10) || [];
+  // Soft skills - all of them
+  const softSkills = jobDetail?.soft_skills || [];
 
-  // Activities for chart - get 10 items
+  // Activities - all of them
   const activities = useMemo(() => {
     if (!jobDetail?.activities) return [];
-    return jobDetail.activities.slice(0, 10).map(activity => ({
+    return jobDetail.activities.map(activity => ({
       name: activity.name.length > 30 ? activity.name.substring(0, 30) + '...' : activity.name,
       value: Math.round(activity.value),
     }));
   }, [jobDetail]);
 
-  // Abilities - get 10
-  const abilities = jobDetail?.abilities?.slice(0, 10) || [];
+  // Abilities - all of them
+  const abilities = jobDetail?.abilities || [];
 
-  // Knowledge - get 10 (increased from 6)
-  const knowledge = jobDetail?.knowledge?.slice(0, 10) || [];
+  // Knowledge - all of them
+  const knowledge = jobDetail?.knowledge || [];
 
   if (loading) {
     return (
@@ -322,10 +337,13 @@ const JobDetail = () => {
 
         {/* Skills Section */}
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Top Skills */}
+          {/* Top Skills - SCROLLABLE */}
           <Card className="glass-card">
             <CardHeader>
-              <SectionHeader title="Top Skills Required" subtitle="Ranked by importance">
+              <SectionHeader 
+                title="Top Skills Required" 
+                subtitle={`${jobSkills.length} skills ranked by importance`}
+              >
                 <Select value={skillSort} onValueChange={setSkillSort}>
                   <SelectTrigger className="w-[140px] bg-secondary/50">
                     <SelectValue placeholder="Sort by" />
@@ -340,14 +358,22 @@ const JobDetail = () => {
             <CardContent>
               {jobSkills.length > 0 ? (
                 <>
-                  <HorizontalBarChart
-                    data={jobSkills}
-                    formatValue={(v) => `${Math.round(v)}%`}
-                    primaryLabel="Importance"
-                    maxValue={100} // ADD THIS LINE
-                  />
-                  <div className="text-xs text-muted-foreground mt-2 text-center">
-                    Showing {jobSkills.length} skills
+                  <div 
+                    className="max-h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    style={{
+                      scrollbarWidth: 'thin',
+                      msOverflowStyle: 'auto',
+                    }}
+                  >
+                    <HorizontalBarChart
+                      data={jobSkills}
+                      formatValue={(v) => `${Math.round(v)}%`}
+                      primaryLabel="Importance"
+                      maxValue={100}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 text-center border-t border-border/50 pt-2">
+                    Showing all {jobSkills.length} skills
                   </div>
                 </>
               ) : (
@@ -358,74 +384,118 @@ const JobDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Top Tech Skills */}
+          {/* Top Tech Skills - SCROLLABLE */}
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
                 title="Top Tech Skills"
-                subtitle="Technical competencies in demand"
+                subtitle={`${techSkills.length} technical competencies in demand`}
               />
             </CardHeader>
             <CardContent>
               {techSkills.length > 0 ? (
                 <>
-                  <div className="flex flex-wrap gap-2">
+                  <div 
+                    className="max-h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    style={{
+                      scrollbarWidth: 'thin',
+                      msOverflowStyle: 'auto',
+                    }}
+                  >
                     {techSkills.map((skill) => {
                       const skillId = getSkillId(skill.name);
                       return (
                         <Link 
                           key={skill.name} 
                           to={`/skills/${skillId}`}
-                          className="inline-block"
+                          className="block group"
                         >
-                          <Badge
-                            variant="secondary"
-                            className={`px-3 py-2 text-sm ${
-                              skill.hot_technology 
-                                ? 'bg-cyan/10 text-cyan border-cyan/20 hover:bg-cyan/20' 
-                                : 'bg-secondary/30 hover:bg-secondary/50'
-                            } cursor-pointer transition-colors`}
-                          >
-                            {skill.name}
-                            {skill.hot_technology && (
-                              <span className="ml-2 text-xs text-cyan">🔥</span>
+                          <div className={`p-3 rounded-lg transition-colors ${
+                            skill.hot_technology 
+                              ? 'bg-cyan/5 hover:bg-cyan/10 border border-cyan/20' 
+                              : 'bg-secondary/20 hover:bg-secondary/30'
+                          }`}>
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-sm group-hover:text-cyan transition-colors">
+                                  {skill.name}
+                                </span>
+                                {skill.hot_technology && (
+                                  <Badge variant="outline" className="text-xs bg-cyan/10 text-cyan border-cyan/20">
+                                    🔥 Hot
+                                  </Badge>
+                                )}
+                                {skill.in_demand && (
+                                  <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
+                                    📈 In Demand
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {Math.round(skill.value)}%
+                              </span>
+                            </div>
+                            {skill.commodity_title && (
+                              <p className="text-xs text-muted-foreground mb-2">
+                                {skill.commodity_title}
+                              </p>
                             )}
-                          </Badge>
+                            <div className="w-full bg-secondary/30 rounded-full h-1.5">
+                              <div 
+                                className={`rounded-full h-1.5 transition-all ${
+                                  skill.hot_technology ? 'bg-cyan' : 'bg-purple'
+                                }`}
+                                style={{ width: `${skill.value}%` }}
+                              />
+                            </div>
+                          </div>
                         </Link>
                       );
                     })}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-2 text-right">
-                    {techSkills.length} tech skills
+                  
+                  <div className="mt-3 text-xs text-muted-foreground text-right border-t border-border/50 pt-2">
+                    Showing all {techSkills.length} tech skills
                   </div>
 
+                  {/* Soft Skills Section - SCROLLABLE */}
                   {softSkills.length > 0 && (
                     <div className="mt-6">
-                      <h4 className="text-sm font-medium mb-3">Soft Skills (from top skills)</h4>
-                      <div className="flex flex-wrap gap-2">
+                      <h4 className="text-sm font-medium mb-3">Soft Skills ({softSkills.length})</h4>
+                      <div 
+                        className="max-h-[300px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                        style={{
+                          scrollbarWidth: 'thin',
+                          msOverflowStyle: 'auto',
+                        }}
+                      >
                         {softSkills.map((skill) => {
                           const skillId = getSkillId(skill.name);
                           return (
                             <Link 
                               key={skill.name} 
                               to={`/skills/${skillId}`}
-                              className="inline-block"
+                              className="block group"
                             >
-                              <Badge
-                                variant="outline"
-                                className="px-3 py-2 text-sm hover:bg-secondary/40 cursor-pointer transition-colors"
-                              >
-                                {skill.name}
-                                <span className="ml-1 text-xs text-muted-foreground">
-                                  {Math.round(skill.value)}%
-                                </span>
-                              </Badge>
+                              <div className="p-2 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm group-hover:text-cyan transition-colors">
+                                    {skill.name}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {Math.round(skill.value)}%
+                                  </span>
+                                </div>
+                                <div className="mt-1 w-full bg-secondary/30 rounded-full h-1">
+                                  <div 
+                                    className="bg-green rounded-full h-1"
+                                    style={{ width: `${skill.value}%` }}
+                                  />
+                                </div>
+                              </div>
                             </Link>
                           );
                         })}
-                      </div>
-                      <div className="text-xs text-muted-foreground mt-2 text-right">
-                        {softSkills.length} soft skills
                       </div>
                     </div>
                   )}
@@ -441,25 +511,33 @@ const JobDetail = () => {
 
         {/* Activities & Abilities */}
         <div className="grid gap-6 lg:grid-cols-2">
-          {/* Top Activities */}
+          {/* Top Activities - SCROLLABLE */}
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
                 title="Top Activities"
-                subtitle="Primary work activities for this role"
+                subtitle={`${activities.length} primary work activities for this role`}
               />
             </CardHeader>
             <CardContent>
               {activities.length > 0 ? (
                 <>
-                  <HorizontalBarChart
-                    data={activities}
-                    formatValue={(v) => `${Math.round(v)}%`}
-                    primaryLabel="Importance"
-                    maxValue={100} // ADD THIS LINE
-                  />
-                  <div className="text-xs text-muted-foreground mt-2 text-center">
-                    Showing {activities.length} activities
+                  <div 
+                    className="max-h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    style={{
+                      scrollbarWidth: 'thin',
+                      msOverflowStyle: 'auto',
+                    }}
+                  >
+                    <HorizontalBarChart
+                      data={activities}
+                      formatValue={(v) => `${Math.round(v)}%`}
+                      primaryLabel="Importance"
+                      maxValue={100}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-2 text-center border-t border-border/50 pt-2">
+                    Showing all {activities.length} activities
                   </div>
                 </>
               ) : (
@@ -470,42 +548,50 @@ const JobDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Abilities & Knowledge */}
+          {/* Abilities - SCROLLABLE */}
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
                 title="Top Abilities"
-                subtitle="Key competencies required"
+                subtitle={`${abilities.length} key competencies required`}
               />
             </CardHeader>
             <CardContent>
               {abilities.length > 0 ? (
                 <>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {abilities.map((ability) => {
-                      const skillId = getSkillId(ability.name);
-                      return (
-                        <Link 
-                          key={ability.name} 
-                          to={`/skills/${skillId}`}
-                          className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
-                        >
-                          <p className="font-medium text-sm group-hover:text-cyan transition-colors">
-                            {ability.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{ability.category}</p>
-                          <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
-                            <div 
-                              className="bg-cyan rounded-full h-1" 
-                              style={{ width: `${ability.value}%` }}
-                            />
-                          </div>
-                        </Link>
-                      );
-                    })}
+                  <div 
+                    className="max-h-[500px] overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    style={{
+                      scrollbarWidth: 'thin',
+                      msOverflowStyle: 'auto',
+                    }}
+                  >
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {abilities.map((ability) => {
+                        const skillId = getSkillId(ability.name);
+                        return (
+                          <Link 
+                            key={ability.name} 
+                            to={`/skills/${skillId}`}
+                            className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
+                          >
+                            <p className="font-medium text-sm group-hover:text-cyan transition-colors">
+                              {ability.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{ability.category}</p>
+                            <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
+                              <div 
+                                className="bg-cyan rounded-full h-1" 
+                                style={{ width: `${ability.value}%` }}
+                              />
+                            </div>
+                          </Link>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-2 text-right">
-                    {abilities.length} abilities
+                  <div className="text-xs text-muted-foreground mt-2 text-right border-t border-border/50 pt-2">
+                    Showing all {abilities.length} abilities
                   </div>
                 </>
               ) : (
@@ -514,10 +600,17 @@ const JobDetail = () => {
                 </div>
               )}
 
+              {/* Knowledge - SCROLLABLE */}
               {knowledge.length > 0 && (
                 <div className="mt-6">
-                  <h4 className="text-sm font-medium mb-3">Necessary Knowledge</h4>
-                  <div className="space-y-2">
+                  <h4 className="text-sm font-medium mb-3">Necessary Knowledge ({knowledge.length})</h4>
+                  <div 
+                    className="max-h-[300px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    style={{
+                      scrollbarWidth: 'thin',
+                      msOverflowStyle: 'auto',
+                    }}
+                  >
                     {knowledge.map((k) => {
                       const skillId = getSkillId(k.name);
                       return (
@@ -534,26 +627,29 @@ const JobDetail = () => {
                       );
                     })}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-2 text-right">
-                    {knowledge.length} knowledge areas
-                  </div>
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Tools Section */}
+        {/* Tools Section - SCROLLABLE */}
         {jobDetail.tools && jobDetail.tools.length > 0 && (
           <Card className="glass-card">
             <CardHeader>
               <SectionHeader
                 title="Tools Used"
-                subtitle="Common tools and technologies for this role"
+                subtitle={`${jobDetail.tools.length} common tools and technologies for this role`}
               />
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-2">
+              <div 
+                className="max-h-[400px] overflow-y-auto p-2 flex flex-wrap gap-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                style={{
+                  scrollbarWidth: 'thin',
+                  msOverflowStyle: 'auto',
+                }}
+              >
                 {jobDetail.tools.map((tool) => {
                   const skillId = getSkillId(tool.name);
                   return (
@@ -577,8 +673,8 @@ const JobDetail = () => {
                   );
                 })}
               </div>
-              <div className="text-xs text-muted-foreground mt-2 text-right">
-                {jobDetail.tools.length} tools
+              <div className="text-xs text-muted-foreground mt-2 text-right border-t border-border/50 pt-2">
+                Showing all {jobDetail.tools.length} tools
               </div>
             </CardContent>
           </Card>
@@ -591,22 +687,17 @@ const JobDetail = () => {
               <SectionHeader title="Debug Info" subtitle="Remove in production" />
             </CardHeader>
             <CardContent>
-              <div className="space-y-1 text-xs">
+              <div className="space-y-1 text-xs max-h-[300px] overflow-y-auto">
                 <p><span className="font-bold">Job Code:</span> {jobDetail.occ_code}</p>
                 <p><span className="font-bold">Job Title:</span> {jobDetail.occ_title}</p>
                 <p><span className="font-bold">SOC Code:</span> {jobDetail.basic_info.soc_code || 'N/A'}</p>
                 <p><span className="font-bold">Skills Count:</span> {jobDetail.skills.length}</p>
-                <p><span className="font-bold">Skills (first 3):</span> {jobDetail.skills.slice(0,3).map(s => s.name).join(', ')}</p>
-                <p><span className="font-bold">Skills Values:</span> {jobDetail.skills.slice(0,3).map(s => Math.round(s.value)).join('%, ')}%</p>
-                <p><span className="font-bold">Tech Skills:</span> {jobDetail.tech_skills.length}</p>
-                <p><span className="font-bold">Soft Skills (from skills list):</span> {jobDetail.soft_skills.length}</p>
+                <p><span className="font-bold">Tech Skills Count:</span> {jobDetail.tech_skills.length}</p>
+                <p><span className="font-bold">Soft Skills Count:</span> {jobDetail.soft_skills.length}</p>
                 <p><span className="font-bold">Activities Count:</span> {jobDetail.activities.length}</p>
-                <p><span className="font-bold">Activities (first 3):</span> {jobDetail.activities.slice(0,3).map(a => a.name).join(', ')}</p>
-                <p><span className="font-bold">Activities Values:</span> {jobDetail.activities.slice(0,3).map(a => Math.round(a.value)).join('%, ')}%</p>
-                <p><span className="font-bold">Abilities:</span> {jobDetail.abilities.length}</p>
-                <p><span className="font-bold">Knowledge:</span> {jobDetail.knowledge.length}</p>
-                <p><span className="font-bold">Knowledge (first 3):</span> {jobDetail.knowledge.slice(0,3).map(k => k.name).join(', ')}</p>
-                <p><span className="font-bold">Tools:</span> {jobDetail.tools.length}</p>
+                <p><span className="font-bold">Abilities Count:</span> {jobDetail.abilities.length}</p>
+                <p><span className="font-bold">Knowledge Count:</span> {jobDetail.knowledge.length}</p>
+                <p><span className="font-bold">Tools Count:</span> {jobDetail.tools.length}</p>
                 <p><span className="font-bold">Has Education:</span> {jobDetail.education ? 'Yes' : 'No'}</p>
               </div>
             </CardContent>
@@ -618,5 +709,3 @@ const JobDetail = () => {
 };
 
 export default JobDetail;
-
-

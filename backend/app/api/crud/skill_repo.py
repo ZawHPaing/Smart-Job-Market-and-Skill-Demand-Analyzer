@@ -255,16 +255,20 @@ class SkillRepo:
             }
     
     # -------------------------
-    # Get Co-occurring Skills - COMPLETELY FIXED for ALL skill types
+    # Get Co-occurring Skills - UPDATED TO GET ALL SKILLS
     # -------------------------
     async def get_co_occurring_skills(
         self, 
         skill_name: str, 
-        limit: int = 10
+        limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Get skills that frequently appear together with this skill.
         Works for ALL skill types (tech, ability, knowledge, work_activity, etc.)
+        
+        Args:
+            skill_name: Name of the skill
+            limit: Optional maximum number of skills to return. If None, returns all.
         """
         if not skill_name:
             return []
@@ -283,6 +287,10 @@ class SkillRepo:
             
             if total_target_jobs == 0:
                 return []
+            
+            # Use a very high limit to effectively get all skills
+            # Assuming no skill has more than 1000 co-occurring skills
+            query_limit = 1000
             
             # Now find co-occurring skills with proper calculations
             result = await session.run(
@@ -350,11 +358,11 @@ class SkillRepo:
                     hot_technology,
                     in_demand
                 ORDER BY co_occurrence_rate DESC, co_occurrence_frequency DESC
-                LIMIT $limit
+                LIMIT $query_limit
                 """,
                 skill_name=skill_name,
                 total_target_jobs=total_target_jobs,
-                limit=limit
+                query_limit=query_limit
             )
             
             skills = []
@@ -416,19 +424,23 @@ class SkillRepo:
                     "demand_trend": 0,
                     "salary_association": 0
                 })
-        
-        # Remove any remaining duplicates just in case (by name)
-        unique_skills = []
-        seen_names = set()
-        for skill in skills:
-            if skill["name"] not in seen_names:
-                seen_names.add(skill["name"])
-                unique_skills.append(skill)
-        
-        return unique_skills[:limit]
+            
+            # Remove any remaining duplicates just in case (by name)
+            unique_skills = []
+            seen_names = set()
+            for skill in skills:
+                if skill["name"] not in seen_names:
+                    seen_names.add(skill["name"])
+                    unique_skills.append(skill)
+            
+            # If limit is provided, apply it, otherwise return all
+            if limit is not None:
+                return unique_skills[:limit]
+            else:
+                return unique_skills
     
     # -------------------------
-    # Get Top Jobs Requiring Skill - FIXED with proper flags
+    # Get Top Jobs Requiring Skill - UPDATED to get all jobs
     # -------------------------
     async def get_top_jobs_for_skill(
         self,
@@ -436,30 +448,56 @@ class SkillRepo:
         limit: int = 6
     ) -> List[Dict[str, Any]]:
         """
-        Get top jobs that require this skill, ranked by importance
+        Get ALL jobs that require this skill - returns jobs without sorting by importance
+        so they can be sorted by employment after adding BLS data
         Works for ALL skill types
+        
+        Args:
+            skill_name: Name of the skill
+            limit: This parameter is now IGNORED - we return ALL jobs
+            
+        Returns:
+            List of ALL jobs that require this skill
         """
         if not skill_name:
             return []
+        
+        # Remove the limit - get ALL jobs
+        # Use a very high limit to get all jobs (assuming max jobs per skill is under 1000)
+        query_limit = 1000  # Get up to 1000 jobs (should be enough for all)
             
         async with self.driver.session() as session:
+            # First, check if the skill exists and has any jobs
+            check_result = await session.run(
+                """
+                MATCH (j:Job)-[r:REQUIRES]->(s:Skill {name: $skill_name})
+                RETURN count(j) as job_count
+                """,
+                skill_name=skill_name
+            )
+            check_record = await check_result.single()
+            job_count = check_record["job_count"] if check_record else 0
+            
+            if job_count == 0:
+                return []
+            
+            print(f"📊 Found {job_count} jobs requiring skill: {skill_name}")
+            
+            # Now get ALL jobs - no filtering, no sorting by importance
             result = await session.run(
                 """
                 MATCH (j:Job)-[r:REQUIRES]->(s:Skill {name: $skill_name})
-                WHERE r.importance IS NOT NULL
                 RETURN j.SOC AS soc_code,
                     j.title AS title,
-                    r.importance AS importance,
-                    r.level AS level,
+                    COALESCE(r.importance, 0) AS importance,
+                    COALESCE(r.level, 0) AS level,
                     COALESCE(r.Hot_Technology, false) AS hot_technology,
                     COALESCE(r.In_Demand, false) AS in_demand
-                ORDER BY r.importance DESC, 
-                        r.level DESC,
-                        j.title
+                ORDER BY j.title  // Simple alphabetical order - we'll sort by employment after getting BLS data
                 LIMIT $limit
                 """,
                 skill_name=skill_name,
-                limit=limit
+                limit=query_limit
             )
             
             jobs = []
@@ -471,6 +509,8 @@ class SkillRepo:
                         importance = round(float(importance) * 20, 1)
                     except:
                         importance = 0
+                else:
+                    importance = 0
                 
                 # Scale level (0-7) to percentage (0-100)
                 level = record.get("level")
@@ -479,16 +519,19 @@ class SkillRepo:
                         level = round(float(level) * 14.3, 1)
                     except:
                         level = 0
+                else:
+                    level = 0
                 
                 jobs.append({
                     "title": record["title"],
                     "soc_code": record["soc_code"],
-                    "importance": importance or 0,
-                    "level": level or 0,
+                    "importance": importance,
+                    "level": level,
                     "hot_technology": record.get("hot_technology", False),
                     "in_demand": record.get("in_demand", False)
                 })
             
+            print(f"📤 Returning {len(jobs)} jobs from Neo4j for skill: {skill_name}")
             return jobs
     
     # -------------------------
@@ -581,8 +624,10 @@ class SkillRepo:
             metrics_task = self.get_skill_metrics(skill_name)
             usage_task = self.get_skill_usage(skill_name)
             tech_flags_task = self.get_tech_skill_flags(skill_name)
-            co_occurring_task = self.get_co_occurring_skills(skill_name, 10)
+            # Get ALL co-occurring skills by passing limit=None
+            co_occurring_task = self.get_co_occurring_skills(skill_name, limit=None)
             network_graph_task = self.get_skill_network_graph(skill_name, 10)
+            # Get ALL jobs
             top_jobs_task = self.get_top_jobs_for_skill(skill_name, 6)
             
             metrics, usage, tech_flags, co_occurring, network_graph, top_jobs = await asyncio.gather(

@@ -337,15 +337,31 @@ class JobDetailRepo:
         
         tech_skills = []
         async for doc in cursor:
+            hot_tech = doc.get("hot_technology", False)
+            in_demand = doc.get("in_demand", False)
+            
+            # Assign percentage based on flags
+            if hot_tech and in_demand:
+                value = 95.0  # Both flags: highest priority
+            elif hot_tech:
+                value = 85.0  # Only hot tech
+            elif in_demand:
+                value = 75.0  # Only in demand
+            else:
+                value = 65.0  # Neither flag
+            
             tech_skills.append({
                 "name": str(doc.get("example", "")),
-                "value": 85.0 if doc.get("hot_technology") else 65.0,
+                "value": value,
                 "type": "tech",
                 "commodity_title": str(doc.get("commodity_title", "")),
-                "hot_technology": doc.get("hot_technology", False),
-                "in_demand": doc.get("in_demand", False)
+                "hot_technology": hot_tech,
+                "in_demand": in_demand
             })
         
+        # Sort by value (percentage) in descending order
+        # This will put skills with both flags first, then hot tech, then in demand, then others
+        tech_skills.sort(key=lambda x: x["value"], reverse=True)
         return tech_skills
     
     async def get_tools(self, onet_soc: str) -> List[Dict[str, Any]]:
@@ -365,6 +381,8 @@ class JobDetailRepo:
                 "commodity_title": str(doc.get("commodity_title", ""))
             })
         
+        # Sort by name (alphabetical) since tools don't have importance values
+        tools.sort(key=lambda x: x["name"])
         return tools
     
     async def get_abilities(self, onet_soc: str) -> List[Dict[str, Any]]:
@@ -484,7 +502,7 @@ class JobDetailRepo:
         return activities
     
     # -------------------------
-    # COMPLETE JOB DETAIL - OPTIMIZED PARALLEL FETCHING WITH MORE ITEMS
+    # COMPLETE JOB DETAIL - OPTIMIZED PARALLEL FETCHING WITH ALL ITEMS
     # -------------------------
     
     async def get_complete_job_detail(self, occ_code: str, year: int = 2024) -> Dict[str, Any]:
@@ -625,18 +643,18 @@ class JobDetailRepo:
                 }
             ]
         
-        # Update result with MORE items (increased limits)
+        # Update result with ALL items (removed limits, all sorted by value descending)
         result.update({
             "metrics": metrics,
-            "skills": all_skills[:20],  # Keep top 20 for sorting/filtering
-            "tech_skills": tech_skills_list[:15],  # Return up to 15 tech skills
-            "soft_skills": soft_skills_list[:15],  # Return up to 15 soft skills from the skills list
-            "activities": activities[:15],  # Return up to 15 activities
-            "abilities": abilities[:15],  # Return up to 15 abilities
-            "knowledge": knowledge[:10],  # Return up to 10 knowledge areas
+            "skills": all_skills,  # ← ALL skills, already sorted by value
+            "tech_skills": tech_skills_list,  # ← ALL tech skills, already sorted by value
+            "soft_skills": soft_skills_list,  # ← ALL soft skills, already sorted by value
+            "activities": activities,  # ← ALL activities, already sorted by value
+            "abilities": abilities,  # ← ALL abilities, already sorted by value
+            "knowledge": knowledge,  # ← ALL knowledge, already sorted by value
             "education": education,
-            "tools": tools[:15],  # Return up to 15 tools
-            "work_activities": activities[:15]  # Return up to 15 work activities
+            "tools": tools,  # ← ALL tools, sorted alphabetically
+            "work_activities": activities  # ← ALL work activities, already sorted by value
         })
         
         return result

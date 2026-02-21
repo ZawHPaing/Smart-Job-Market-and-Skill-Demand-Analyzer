@@ -57,12 +57,13 @@ async def search_skills(
 @router.get("/{skill_id}", response_model=SkillDetailResponse)
 async def get_skill_detail(
     skill_id: str,
-    year: int = Query(..., description="Year for salary data (2011-2024)"),  # Make required like industries
+    year: int = Query(..., description="Year for salary data (2011-2024)"),
     neo4j_driver: AsyncDriver = Depends(get_neo4j_driver),
     mongodb: "AgnosticDatabase" = Depends(get_db),
 ) -> SkillDetailResponse:
-    """Get complete skill details from Neo4j with year-specific salary data"""
-    # Year is required - just like industries endpoints
+    """Get complete skill details from Neo4j with year-specific salary data.
+    Jobs are sorted by total employment (number of people in that occupation)
+    for the selected year, highest first."""
     
     # Check cache with year
     cache_key = f"skill_detail_{skill_id}_{year}"
@@ -119,23 +120,47 @@ async def get_skill_detail(
             detail=f"Skill not found: {skill_name}. Please try searching from the Jobs page."
         )
     
-    # Enhance top jobs with BLS salary data for the selected year
+    # Get ALL jobs that require this skill from Neo4j
+    jobs_from_neo4j = skill_detail.get("top_jobs", [])
+    print(f"📊 Received {len(jobs_from_neo4j)} jobs from Neo4j for {skill_name}")
+    
+    # Enhance each job with BLS employment and salary data for the selected year
     enhanced_jobs = []
-    for job in skill_detail.get("top_jobs", []):
+    jobs_without_data = 0
+    
+    for job in jobs_from_neo4j:
         soc_code = job.get("soc_code")
         if soc_code:
             # Get BLS data for this occupation for the specific year
             bls_data = await job_detail_repo.get_job_by_occ_code(soc_code.replace(".00", ""), year)
             if bls_data:
-                job["median_salary"] = bls_data.get("a_median")
-                job["employment"] = bls_data.get("tot_emp")
+                # Get employment (tot_emp) - this is the actual number of people employed in this occupation
+                employment = bls_data.get("tot_emp")
+                # Only include jobs that have employment data and it's > 0
+                if employment and employment > 0:
+                    job_with_bls = job.copy()
+                    job_with_bls["median_salary"] = bls_data.get("a_median")
+                    job_with_bls["employment"] = employment
+                    enhanced_jobs.append(job_with_bls)
+                else:
+                    jobs_without_data += 1
             else:
-                # No fallback - just set to None if data not available for that year
-                job["median_salary"] = None
-                job["employment"] = None
-        enhanced_jobs.append(job)
+                jobs_without_data += 1
+        else:
+            jobs_without_data += 1
     
-    skill_detail["top_jobs"] = enhanced_jobs
+    print(f"📊 After BLS enhancement: {len(enhanced_jobs)} jobs with employment data, {jobs_without_data} jobs skipped")
+    
+    # SORT BY EMPLOYMENT (number of people in the occupation) - HIGHEST FIRST
+    enhanced_jobs.sort(key=lambda x: x.get("employment", 0) or 0, reverse=True)
+    
+    # Log the top jobs and their employment numbers for debugging
+    print(f"📊 Top jobs for {skill_name} sorted by employment (year {year}):")
+    for i, job in enumerate(enhanced_jobs[:10]):  # Show top 10
+        print(f"  {i+1}. {job['title']}: {job.get('employment', 0):,} employed, ${job.get('median_salary', 0):,} median salary")
+    
+    # Update the skill detail with ALL enhanced and sorted jobs
+    skill_detail["top_jobs"] = enhanced_jobs  # Store ALL jobs
     skill_detail["year"] = year  # Add year to response
     
     response = SkillDetailResponse(**skill_detail)
@@ -146,12 +171,14 @@ async def get_skill_detail(
 @router.get("/{skill_id}/jobs")
 async def get_skill_jobs(
     skill_id: str,
-    year: int = Query(..., description="Year for salary data (2011-2024)"),  # Make required
+    year: int = Query(..., description="Year for salary data (2011-2024)"),
     limit: int = Query(10, ge=1, le=50),
     neo4j_driver: AsyncDriver = Depends(get_neo4j_driver),
     mongodb: "AgnosticDatabase" = Depends(get_db),
 ) -> List[dict]:
-    """Get top jobs for a specific skill with year-specific salary data"""
+    """Get top jobs for a specific skill with year-specific salary data.
+    Jobs are sorted by total employment (number of people in that occupation)
+    for the selected year, highest first."""
     cache_key = f"skill_jobs_{skill_id}_{year}_{limit}"
     cached = cache.get(cache_key)
     if cached:
@@ -162,7 +189,9 @@ async def get_skill_jobs(
     
     skill_name = skill_id.replace("_", " ").replace("-", " ").title()
     
-    jobs = await repo.get_top_jobs_for_skill(skill_name, limit)
+    # Get ALL jobs from Neo4j (the repo now returns up to 1000 jobs)
+    jobs = await repo.get_top_jobs_for_skill(skill_name, limit=limit)  # limit parameter is now ignored in repo
+    print(f"📊 Received {len(jobs)} jobs from Neo4j for {skill_name} in /jobs endpoint")
     
     # Enhance with BLS data for the selected year
     enhanced_jobs = []
@@ -171,24 +200,36 @@ async def get_skill_jobs(
         if soc_code:
             bls_data = await job_detail_repo.get_job_by_occ_code(soc_code.replace(".00", ""), year)
             if bls_data:
-                job["median_salary"] = bls_data.get("a_median")
-                job["employment"] = bls_data.get("tot_emp")
-            else:
-                job["median_salary"] = None
-                job["employment"] = None
-        enhanced_jobs.append(job)
+                employment = bls_data.get("tot_emp")
+                if employment and employment > 0:
+                    job_with_bls = job.copy()
+                    job_with_bls["median_salary"] = bls_data.get("a_median")
+                    job_with_bls["employment"] = employment
+                    enhanced_jobs.append(job_with_bls)
     
-    cache.set(cache_key, enhanced_jobs)
-    return enhanced_jobs
+    # Sort by employment (number of people employed) - highest first
+    enhanced_jobs.sort(key=lambda x: x.get("employment", 0) or 0, reverse=True)
+    
+    # Log top jobs for debugging
+    print(f"📊 Sorted jobs for {skill_name}:")
+    for i, job in enumerate(enhanced_jobs[:5]):
+        print(f"  {i+1}. {job['title']}: {job.get('employment', 0):,} employed")
+    
+    # Limit to requested number
+    result = enhanced_jobs[:limit]
+    
+    cache.set(cache_key, result)
+    return result
 
 
 @router.get("/{skill_id}/co-occurring")
 async def get_co_occurring_skills(
     skill_id: str,
-    limit: int = Query(6, ge=1, le=20),
+    limit: int = Query(None, ge=1, le=1000),  # Optional limit, can get all
     neo4j_driver: AsyncDriver = Depends(get_neo4j_driver),
 ) -> List[dict]:
-    """Get co-occurring skills for a specific skill"""
+    """Get co-occurring skills for a specific skill.
+    If no limit provided, returns all co-occurring skills."""
     cache_key = f"skill_cooccurring_{skill_id}_{limit}"
     cached = cache.get(cache_key)
     if cached:
@@ -197,7 +238,19 @@ async def get_co_occurring_skills(
     repo = SkillRepo(neo4j_driver)
     skill_name = skill_id.replace("_", " ").replace("-", " ").title()
     
-    skills = await repo.get_co_occurring_skills(skill_name, limit)
+    # Pass limit=None to get all skills
+    skills = await repo.get_co_occurring_skills(skill_name, limit=limit)
+    
+    # Log the breakdown by type for debugging
+    if skills:
+        type_counts: Dict[str, int] = {}
+        for skill in skills:
+            skill_type = skill.get("type", "unknown")
+            type_counts[skill_type] = type_counts.get(skill_type, 0) + 1
+        
+        print(f"📊 Co-occurring skills for {skill_name} - breakdown by type:")
+        for skill_type, count in type_counts.items():
+            print(f"  - {skill_type}: {count}")
     
     cache.set(cache_key, skills)
     return skills
