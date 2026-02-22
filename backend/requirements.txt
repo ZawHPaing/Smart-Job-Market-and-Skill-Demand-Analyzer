@@ -38,3 +38,6 @@ prophet
 
 httpx>=0.24.0
 statsmodels>=0.14.0
+
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn

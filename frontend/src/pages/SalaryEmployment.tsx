@@ -86,19 +86,35 @@ function buildMultiLineRows(series: { key: string; points: { year: number; value
   return Array.from(yearMap.values()).sort((a, b) => (a.year as number) - (b.year as number));
 }
 
+// In SalaryEmployment.tsx, update the normalizeEmploymentTrendMetric function
+
 function normalizeEmploymentTrendMetric(items: MetricItem[]): MetricItem[] {
   return (items || []).map((m) => {
-    if (m.title !== "Employment Trend") return m;
-    const raw = m.value;
-    const num =
-      typeof raw === "number"
-        ? raw
-        : Number.parseFloat(String(raw ?? "").replace(/[^0-9.-]/g, ""));
-    return {
-      ...m,
-      value: Number.isFinite(num) ? num : raw,
-      suffix: "%",
-    };
+    if (m.title === "Employment Trend") {
+      const raw = m.value;
+      const num =
+        typeof raw === "number"
+          ? raw
+          : Number.parseFloat(String(raw ?? "").replace(/[^0-9.-]/g, ""));
+      return {
+        ...m,
+        value: Number.isFinite(num) ? num : raw,
+        suffix: "%",
+      };
+    }
+    if (m.title === "Salary Trend") {
+      const raw = m.value;
+      const num =
+        typeof raw === "number"
+          ? raw
+          : Number.parseFloat(String(raw ?? "").replace(/[^0-9.-]/g, ""));
+      return {
+        ...m,
+        value: Number.isFinite(num) ? num : raw,
+        suffix: "%",
+      };
+    }
+    return m;
   });
 }
 

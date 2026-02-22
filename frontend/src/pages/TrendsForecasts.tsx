@@ -1,13 +1,17 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Calendar, TrendingUp, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, TrendingUp, AlertCircle, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { MultiLineChart } from '@/components/charts';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { ForecastAPI } from '@/lib/forecast';
 import type { ForecastResponse } from '@/lib/forecast';
+
+const PAGE_SIZE = 10;
+const FORECAST_YEARS = [2025, 2026, 2027, 2028];
 
 // Helper functions - only used for chart formatting, not for metrics
 const fmtK = (n: number) => {
@@ -25,8 +29,6 @@ const fmtM = (n: number) => {
   }
   return n.toString();
 };
-
-const FORECAST_YEARS = [2025, 2026, 2027, 2028];
 
 // Extended chart colors for 10 items
 const CHART_COLORS = [
@@ -48,6 +50,11 @@ const TrendsForecasts = () => {
   const [error, setError] = useState<string | null>(null);
   const [forecastData, setForecastData] = useState<ForecastResponse | null>(null);
 
+  // Pagination states
+  const [jobsPage, setJobsPage] = useState(1);
+  const [industriesPage, setIndustriesPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+
   useEffect(() => {
     let cancelled = false;
 
@@ -61,6 +68,9 @@ const TrendsForecasts = () => {
         if (cancelled) return;
         
         setForecastData(data);
+        // Reset pagination when forecast year changes
+        setJobsPage(1);
+        setIndustriesPage(1);
       } catch (e: any) {
         if (cancelled) return;
         setError(e?.message || 'Failed to load forecast data');
@@ -80,10 +90,9 @@ const TrendsForecasts = () => {
     if (!forecastData?.metrics) return [];
     
     return forecastData.metrics.map(m => {
-      // Pass raw values - let MetricCard handle formatting
       return {
         title: m.title,
-        value: m.value, // Raw number (e.g., 149164323)
+        value: m.value,
         prefix: m.prefix,
         suffix: m.suffix,
         trend: m.trend ? {
@@ -95,13 +104,12 @@ const TrendsForecasts = () => {
     });
   }, [forecastData]);
 
-  // Transform employment forecast data for MultiLineChart - spanning full range
+  // Transform employment forecast data for MultiLineChart
   const employmentChartData = useMemo(() => {
     if (!forecastData?.employment_forecast?.length) {
       return [];
     }
     
-    // Get top 10 industry names from industry_details
     const industries = forecastData.industry_details
       ?.slice(0, 10)
       .map(i => i.industry) || [];
@@ -128,13 +136,66 @@ const TrendsForecasts = () => {
     }));
   }, [forecastData]);
 
-  // Get top 10 industry details for the table - FORMAT FOR DISPLAY
-  const industryDetailsTop10 = useMemo(() => {
+  // Filter and paginate jobs
+  const filteredJobs = useMemo(() => {
+    if (!forecastData?.top_jobs_forecast?.length) return [];
+    
+    let jobs = forecastData.top_jobs_forecast;
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      jobs = jobs.filter(job => 
+        job.name.toLowerCase().includes(query)
+      );
+    }
+    
+    return jobs;
+  }, [forecastData, searchQuery]);
+
+  const totalJobs = filteredJobs.length;
+  const totalJobPages = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
+  
+  // Get paginated jobs for current page
+  const paginatedJobs = useMemo(() => {
+    const start = (jobsPage - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    return filteredJobs.slice(start, end).map(job => ({
+      ...job,
+      valueDisplay: job.value >= 1_000_000 ? fmtM(job.value) : 
+                    job.value >= 1000 ? fmtK(job.value) : 
+                    job.value.toLocaleString()
+    }));
+  }, [filteredJobs, jobsPage]);
+
+  // Filter and paginate industries
+  const filteredIndustries = useMemo(() => {
     if (!forecastData?.industry_details?.length) return [];
     
-    return forecastData.industry_details.slice(0, 10).map(item => ({
+    let industries = forecastData.industry_details;
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      industries = industries.filter(ind => 
+        ind.industry.toLowerCase().includes(query)
+      );
+    }
+    
+    return industries;
+  }, [forecastData, searchQuery]);
+
+  const totalIndustries = filteredIndustries.length;
+  const totalIndustryPages = Math.max(1, Math.ceil(totalIndustries / PAGE_SIZE));
+  
+  // Get paginated industries for current page
+  const paginatedIndustries = useMemo(() => {
+    const start = (industriesPage - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    
+    return filteredIndustries.slice(start, end).map(item => ({
       ...item,
-      // Format for display in table cells
+      confidence_score: item.confidence_score,
       currentDisplay: item.current >= 1_000_000 ? fmtM(item.current) : 
                       item.current >= 1000 ? fmtK(item.current) : 
                       item.current.toLocaleString(),
@@ -142,19 +203,13 @@ const TrendsForecasts = () => {
                        item.forecast >= 1000 ? fmtK(item.forecast) : 
                        item.forecast.toLocaleString(),
     }));
-  }, [forecastData]);
+  }, [filteredIndustries, industriesPage]);
 
-  // Format top jobs for display
-  const topJobsFormatted = useMemo(() => {
-    if (!forecastData?.top_jobs_forecast?.length) return [];
-    
-    return forecastData.top_jobs_forecast.map(job => ({
-      ...job,
-      valueDisplay: job.value >= 1_000_000 ? fmtM(job.value) : 
-                    job.value >= 1000 ? fmtK(job.value) : 
-                    job.value.toLocaleString()
-    }));
-  }, [forecastData]);
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setJobsPage(1);
+    setIndustriesPage(1);
+  }, [searchQuery]);
 
   if (loading) {
     return (
@@ -247,18 +302,30 @@ const TrendsForecasts = () => {
           </div>
         </div>
 
+        {/* Search Input */}
+        <div className="relative w-full max-w-xs">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Search jobs or industries..."
+            className="pl-10 bg-secondary/50"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+
         {/* Confidence Note */}
         <div className="flex items-start gap-3 p-4 rounded-lg bg-amber/10 border border-amber/20">
           <AlertCircle className="h-5 w-5 text-amber shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium">Prophet Forecast Model</p>
+            <p className="text-sm font-medium">Ensemble Forecast Model</p>
             <p className="text-sm text-muted-foreground">
               {forecastData.disclaimer} Confidence level: {forecastData.confidence_level}
             </p>
           </div>
         </div>
 
-        {/* Key Metrics - Now passing raw numbers */}
+        {/* Key Metrics */}
         {metrics.length > 0 && <MetricsGrid metrics={metrics} />}
 
         {/* Full Width Employment Forecast Chart */}
@@ -293,7 +360,7 @@ const TrendsForecasts = () => {
           </CardContent>
         </Card>
 
-        {/* Est. Top Jobs */}
+        {/* Est. Top Jobs with Pagination */}
         <Card className="glass-card">
           <CardHeader>
             <SectionHeader
@@ -302,114 +369,190 @@ const TrendsForecasts = () => {
             />
           </CardHeader>
           <CardContent>
-            {topJobsFormatted.length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {topJobsFormatted.map((job, index) => (
-                  <div
-                    key={job.name}
-                    className="p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 transition-colors group"
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <span className="text-xs text-muted-foreground">#{index + 1}</span>
-                      <div className="flex items-center gap-1 text-green-500 text-sm font-medium">
-                        <TrendingUp className="h-3 w-3" />
-                        +{job.growth}%
+            {paginatedJobs.length > 0 ? (
+              <>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {paginatedJobs.map((job, index) => (
+                    <div
+                      key={job.name}
+                      className="p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 transition-colors group"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <span className="text-xs text-muted-foreground">
+                          #{(jobsPage - 1) * PAGE_SIZE + index + 1}
+                        </span>
+                        <div className="flex items-center gap-1 text-green-500 text-sm font-medium">
+                          <TrendingUp className="h-3 w-3" />
+                          +{job.growth}%
+                        </div>
                       </div>
+                      <h4 className="font-medium group-hover:text-cyan transition-colors">
+                        {job.name}
+                      </h4>
+                      <p className="text-2xl font-bold text-cyan mt-2">
+                        {job.valueDisplay}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Est. job postings in {forecastYear}
+                      </p>
                     </div>
-                    <h4 className="font-medium group-hover:text-cyan transition-colors">
-                      {job.name}
-                    </h4>
-                    <p className="text-2xl font-bold text-cyan mt-2">
-                      {job.valueDisplay}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Est. job postings in {forecastYear}
-                    </p>
+                  ))}
+                </div>
+
+                {/* Pagination controls */}
+                <div className="mt-6 flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {(jobsPage - 1) * PAGE_SIZE + 1} to {Math.min(jobsPage * PAGE_SIZE, totalJobs)} of {totalJobs} jobs
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={jobsPage <= 1}
+                      onClick={() => setJobsPage(p => p - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Prev
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={jobsPage >= totalJobPages}
+                      onClick={() => setJobsPage(p => p + 1)}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
                   </div>
-                ))}
-              </div>
+                </div>
+              </>
             ) : (
               <div className="flex items-center justify-center h-32 text-muted-foreground">
-                No top jobs forecast data available
+                {searchQuery.trim() 
+                  ? `No jobs found matching "${searchQuery.trim()}"`
+                  : "No top jobs forecast data available"}
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Industry Forecast Details - Top 10 */}
+        {/* Industry Forecast Details with Pagination */}
         <Card className="glass-card">
           <CardHeader>
             <SectionHeader
               title="Industry Forecast Comparison"
-              subtitle={`Top 10 industries by projected job postings in ${forecastYear}`}
+              subtitle={`Industries sorted by projected job postings in ${forecastYear}`}
             />
           </CardHeader>
           <CardContent>
-            {industryDetailsTop10.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                        Industry
-                      </th>
-                      <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                        2024 (Actual)
-                      </th>
-                      <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                        {forecastYear} (Est.)
-                      </th>
-                      <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                        Change
-                      </th>
-                      <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                        Confidence
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {industryDetailsTop10.map((row) => (
-                      <tr
-                        key={row.industry}
-                        className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
-                      >
-                        <td className="py-3 px-4 font-medium">{row.industry}</td>
-                        <td className="py-3 px-4 text-right text-muted-foreground">
-                          {row.currentDisplay}
-                        </td>
-                        <td className="py-3 px-4 text-right text-cyan font-medium">
-                          {row.forecastDisplay}
-                        </td>
-                        <td
-                          className={`py-3 px-4 text-right font-medium ${
-                            row.change >= 0 ? 'text-green-500' : 'text-coral'
-                          }`}
-                        >
-                          {row.change >= 0 ? '+' : ''}
-                          {row.change}%
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <Badge
-                            variant="outline"
-                            className={
-                              row.confidence === 'High'
-                                ? 'border-green-500/50 text-green-500'
-                                : row.confidence === 'Medium'
-                                ? 'border-amber/50 text-amber'
-                                : 'border-coral/50 text-coral'
-                            }
-                          >
-                            {row.confidence}
-                          </Badge>
-                        </td>
+            {paginatedIndustries.length > 0 ? (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
+                          Industry
+                        </th>
+                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                          2024 (Actual)
+                        </th>
+                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                          {forecastYear} (Est.)
+                        </th>
+                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                          Change
+                        </th>
+                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                          Confidence Score
+                        </th>
+                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                          Confidence Level
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {paginatedIndustries.map((row) => (
+                        <tr
+                          key={row.industry}
+                          className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
+                        >
+                          <td className="py-3 px-4 font-medium">{row.industry}</td>
+                          <td className="py-3 px-4 text-right text-muted-foreground">
+                            {row.currentDisplay}
+                          </td>
+                          <td className="py-3 px-4 text-right text-cyan font-medium">
+                            {row.forecastDisplay}
+                          </td>
+                          <td
+                            className={`py-3 px-4 text-right font-medium ${
+                              row.change >= 0 ? 'text-green-500' : 'text-coral'
+                            }`}
+                          >
+                            {row.change >= 0 ? '+' : ''}
+                            {row.change}%
+                          </td>
+                          <td className={`py-3 px-4 text-right font-medium ${
+                            row.confidence === 'High'
+                              ? 'text-green-500'
+                              : row.confidence === 'Medium'
+                              ? 'text-amber'
+                              : 'text-coral'
+                          }`}>
+                            {row.confidence_score}%
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <Badge
+                              variant="outline"
+                              className={
+                                row.confidence === 'High'
+                                  ? 'border-green-500/50 text-green-500'
+                                  : row.confidence === 'Medium'
+                                  ? 'border-amber/50 text-amber'
+                                  : 'border-coral/50 text-coral'
+                              }
+                            >
+                              {row.confidence}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination controls */}
+                <div className="mt-4 flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Showing {(industriesPage - 1) * PAGE_SIZE + 1} to {Math.min(industriesPage * PAGE_SIZE, totalIndustries)} of {totalIndustries} industries
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={industriesPage <= 1}
+                      onClick={() => setIndustriesPage(p => p - 1)}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />
+                      Prev
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={industriesPage >= totalIndustryPages}
+                      onClick={() => setIndustriesPage(p => p + 1)}
+                    >
+                      Next
+                      <ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="flex items-center justify-center h-32 text-muted-foreground">
-                No industry details data available
+                {searchQuery.trim()
+                  ? `No industries found matching "${searchQuery.trim()}"`
+                  : "No industry details data available"}
               </div>
             )}
           </CardContent>

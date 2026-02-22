@@ -32,6 +32,7 @@ export type IndustryDetail = {
   forecast: number;
   change: number;
   confidence: string;
+  confidence_score: number;  // Add this
 };
 
 export type ForecastResponse = {

@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation } from 'react-router-dom';
 import { ChevronLeft, Briefcase } from 'lucide-react';
 import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
@@ -70,6 +70,7 @@ const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
   const occ_code = id;
   const { year } = useYear();
+  const location = useLocation();
   
   const [skillSort, setSkillSort] = useState('importance');
   const [loading, setLoading] = useState(true);
@@ -153,38 +154,46 @@ const JobDetail = () => {
 
   // Transform metrics for MetricsGrid component
   const metricsGridData = useMemo(() => {
-  if (!jobDetail?.metrics) return [];
-  
-  return jobDetail.metrics.map((metric: JobMetric) => {
-    let formattedValue = metric.value;
-    let shouldUseCustomFormatting = false;
+    if (!jobDetail?.metrics) return [];
     
-    // Handle different format types
-    if (metric.format === 'fmtK' && typeof metric.value === 'number') {
-      // For fmtK, we want to pass the raw number and let MetricCard format it with K
-      // But we need to ensure it's a number, not a string
-      formattedValue = metric.value; // Keep as raw number
-      shouldUseCustomFormatting = true;
-    } else if (metric.format === 'fmtPercent' && typeof metric.value === 'number') {
-      formattedValue = Math.round(metric.value) + '%';
-    } else if (metric.format === 'fmtM' && typeof metric.value === 'number') {
-      formattedValue = metric.value; // Keep as raw number for M formatting
-      shouldUseCustomFormatting = true;
-    }
-    
-    return {
-      title: metric.title,
-      value: formattedValue,
-      prefix: metric.prefix,
-      suffix: shouldUseCustomFormatting ? '' : metric.suffix, // Remove suffix for formatted values
-      trend: metric.trend ? {
-        value: Math.abs(metric.trend.value),
-        direction: metric.trend.direction as "up" | "down" | "neutral"
-      } : undefined,
-      color: metric.color || 'cyan'
-    };
-  });
-}, [jobDetail]);
+    return jobDetail.metrics.map((metric: JobMetric) => {
+      let formattedValue = metric.value;
+      let shouldUseCustomFormatting = false;
+      
+      // Handle different format types
+      if (metric.format === 'fmtK' && typeof metric.value === 'number') {
+        formattedValue = metric.value;
+        shouldUseCustomFormatting = true;
+      } else if (metric.format === 'fmtPercent' && typeof metric.value === 'number') {
+        formattedValue = Math.round(metric.value) + '%';
+      } else if (metric.format === 'fmtM' && typeof metric.value === 'number') {
+        formattedValue = metric.value;
+        shouldUseCustomFormatting = true;
+      }
+      
+      // Special handling for Job Trend - add % suffix
+      if (metric.title === "Job Trend") {
+        // If it's already a string with % sign, keep it, otherwise format
+        if (typeof metric.value === 'string' && metric.value.includes('%')) {
+          formattedValue = metric.value;
+        } else if (typeof metric.value === 'number') {
+          formattedValue = `${metric.value > 0 ? '+' : ''}${metric.value}%`;
+        }
+      }
+      
+      return {
+        title: metric.title,
+        value: formattedValue,
+        prefix: metric.prefix,
+        suffix: shouldUseCustomFormatting ? '' : metric.suffix,
+        trend: metric.trend ? {
+          value: Math.abs(metric.trend.value),
+          direction: metric.trend.direction as "up" | "down" | "neutral"
+        } : undefined,
+        color: metric.color || 'cyan'
+      };
+    }).filter(metric => metric.title !== "Experience Required"); // Filter out Experience Required
+  }, [jobDetail]);
 
   // Format skills for chart - show all skills but limit display to prevent overcrowding
   const jobSkills = useMemo(() => {
@@ -374,9 +383,9 @@ const JobDetail = () => {
         </Card>
 
         {/* Skills Section */}
-        <div className="grid items-start gap-6 lg:grid-cols-2">
-          {/* Top Skills - SCROLLABLE */}
-          <Card className="glass-card">
+        <div className="grid items-stretch gap-6 lg:grid-cols-2">
+          {/* Top Skills - FULL HEIGHT */}
+          <Card className="glass-card h-full flex flex-col">
             <CardHeader>
               <SectionHeader 
                 title="Top Skills Required" 
@@ -393,11 +402,11 @@ const JobDetail = () => {
                 </Select>
               </SectionHeader>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1">
               {jobSkills.length > 0 ? (
                 <>
                   <div 
-                    className="max-h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    className="h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
                     style={{
                       scrollbarWidth: 'thin',
                       msOverflowStyle: 'auto',
@@ -417,19 +426,19 @@ const JobDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Top Tech Skills - SCROLLABLE */}
-          <Card className="glass-card">
+          {/* Top Tech Skills - FULL HEIGHT */}
+          <Card className="glass-card h-full flex flex-col">
             <CardHeader>
               <SectionHeader
                 title="Top Tech Skills"
                 subtitle={`${techSkills.length} technical competencies in demand`}
               />
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1">
               {techSkills.length > 0 ? (
                 <>
                   <div 
-                    className="max-h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    className="h-[300px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
                     style={{
                       scrollbarWidth: 'thin',
                       msOverflowStyle: 'auto',
@@ -441,6 +450,7 @@ const JobDetail = () => {
                         <Link 
                           key={skill.name} 
                           to={`/skills/${skillId}`}
+                          state={{ from: location.pathname }}
                           className="block group"
                         >
                           <div className={`p-3 rounded-lg transition-colors ${
@@ -491,12 +501,12 @@ const JobDetail = () => {
                     Showing all {techSkills.length} tech skills
                   </div>
 
-                  {/* Soft Skills Section - SCROLLABLE */}
+                  {/* Soft Skills Section */}
                   {softSkills.length > 0 && (
                     <div className="mt-6">
                       <h4 className="text-sm font-medium mb-3">Soft Skills ({softSkills.length})</h4>
                       <div 
-                        className="max-h-[300px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                        className="h-[200px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
                         style={{
                           scrollbarWidth: 'thin',
                           msOverflowStyle: 'auto',
@@ -508,6 +518,7 @@ const JobDetail = () => {
                             <Link 
                               key={skill.name} 
                               to={`/skills/${skillId}`}
+                              state={{ from: location.pathname }}
                               className="block group"
                             >
                               <div className="p-2 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
@@ -543,20 +554,20 @@ const JobDetail = () => {
         </div>
 
         {/* Activities & Abilities */}
-        <div className="grid items-start gap-6 lg:grid-cols-2">
-          {/* Top Activities - SCROLLABLE */}
-          <Card className="glass-card">
+        <div className="grid items-stretch gap-6 lg:grid-cols-2">
+          {/* Top Activities - FULL HEIGHT */}
+          <Card className="glass-card h-full flex flex-col">
             <CardHeader>
               <SectionHeader
                 title="Top Activities"
                 subtitle={`${activities.length} primary work activities for this role`}
               />
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1">
               {activities.length > 0 ? (
                 <>
                   <div 
-                    className="max-h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    className="h-[500px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
                     style={{
                       scrollbarWidth: 'thin',
                       msOverflowStyle: 'auto',
@@ -576,19 +587,19 @@ const JobDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Abilities - SCROLLABLE */}
-          <Card className="glass-card">
+          {/* Abilities - FULL HEIGHT */}
+          <Card className="glass-card h-full flex flex-col">
             <CardHeader>
               <SectionHeader
                 title="Top Abilities"
                 subtitle={`${abilities.length} key competencies required`}
               />
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1">
               {abilities.length > 0 ? (
                 <>
                   <div 
-                    className="max-h-[500px] overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    className="h-[400px] overflow-y-auto pr-2 space-y-3 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
                     style={{
                       scrollbarWidth: 'thin',
                       msOverflowStyle: 'auto',
@@ -601,6 +612,7 @@ const JobDetail = () => {
                           <Link 
                             key={ability.name} 
                             to={`/skills/${skillId}`}
+                            state={{ from: location.pathname }}
                             className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
                           >
                             <p className="font-medium text-sm group-hover:text-cyan transition-colors">
@@ -628,12 +640,12 @@ const JobDetail = () => {
                 </div>
               )}
 
-              {/* Knowledge - SCROLLABLE */}
+              {/* Knowledge Section */}
               {knowledge.length > 0 && (
                 <div className="mt-6">
                   <h4 className="text-sm font-medium mb-3">Necessary Knowledge ({knowledge.length})</h4>
                   <div 
-                    className="max-h-[300px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
+                    className="h-[200px] overflow-y-auto pr-2 space-y-2 scrollbar-thin scrollbar-thumb-secondary scrollbar-track-transparent hover:scrollbar-thumb-secondary/80"
                     style={{
                       scrollbarWidth: 'thin',
                       msOverflowStyle: 'auto',
@@ -645,6 +657,7 @@ const JobDetail = () => {
                         <Link
                           key={k.name}
                           to={`/skills/${skillId}`}
+                          state={{ from: location.pathname }}
                           className="flex items-center justify-between p-2 rounded bg-secondary/20 hover:bg-secondary/30 transition-colors group"
                         >
                           <span className="text-sm group-hover:text-cyan transition-colors">{k.name}</span>
@@ -684,6 +697,7 @@ const JobDetail = () => {
                     <Link 
                       key={tool.name} 
                       to={`/skills/${skillId}`}
+                      state={{ from: location.pathname }}
                       className="inline-block"
                     >
                       <Badge

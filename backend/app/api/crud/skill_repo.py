@@ -255,7 +255,7 @@ class SkillRepo:
             }
     
     # -------------------------
-    # Get Co-occurring Skills - UPDATED TO GET ALL SKILLS
+    # Get Co-occurring Skills - KEEP ORIGINAL VERSION
     # -------------------------
     async def get_co_occurring_skills(
         self, 
@@ -421,8 +421,8 @@ class SkillRepo:
                     "avg_level": avg_level,
                     "hot_technology": hot_technology,
                     "in_demand": in_demand,
-                    "demand_trend": 0,
-                    "salary_association": 0
+                    "demand_trend": 0,  # KEEP original field
+                    "salary_association": 0  # KEEP original field
                 })
             
             # Remove any remaining duplicates just in case (by name)
@@ -438,6 +438,380 @@ class SkillRepo:
                 return unique_skills[:limit]
             else:
                 return unique_skills
+    
+    # -------------------------
+    # NEW: Get Co-occurring Skills with Correlation Analysis
+    # -------------------------
+    # -------------------------
+# NEW: Get Co-occurring Skills with Correlation Analysis
+# -------------------------
+    async def get_co_occurring_skills_with_correlation(
+        self, 
+        skill_name: str, 
+        limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get skills that frequently appear together with this skill,
+        including lift and chi-square correlation analysis.
+        
+        Args:
+            skill_name: Name of the skill
+            limit: Optional maximum number of skills to return. If None, returns all.
+        """
+        if not skill_name:
+            return []
+            
+        async with self.driver.session() as session:
+            # First, get the total number of jobs that require the target skill
+            total_jobs_result = await session.run(
+                """
+                MATCH (j:Job)-[:REQUIRES]->(s:Skill {name: $skill_name})
+                RETURN count(DISTINCT j) AS total_target_jobs
+                """,
+                skill_name=skill_name
+            )
+            total_jobs_record = await total_jobs_result.single()
+            total_target_jobs = total_jobs_record["total_target_jobs"] if total_jobs_record else 0
+            
+            if total_target_jobs == 0:
+                return []
+            
+            # Also get total jobs overall
+            total_all_jobs_result = await session.run(
+                """
+                MATCH (j:Job)
+                RETURN count(j) AS total_all_jobs
+                """
+            )
+            total_all_jobs_record = await total_all_jobs_result.single()
+            total_all_jobs = total_all_jobs_record["total_all_jobs"] if total_all_jobs_record else 1
+            
+            # Use a very high limit to effectively get all skills
+            query_limit = 1000
+            
+            # Now find co-occurring skills with proper calculations including lift and chi-square
+            result = await session.run(
+                """
+                // Find jobs that require the target skill
+                MATCH (s1:Skill {name: $skill_name})<-[:REQUIRES]-(j:Job)
+                
+                // Find other skills required by those same jobs
+                MATCH (j)-[r2:REQUIRES]->(s2:Skill)
+                WHERE s1.name <> s2.name
+                
+                // Aggregate by skill to avoid duplicates
+                WITH s2, 
+                    COLLECT(DISTINCT j) AS jobs,
+                    COLLECT(r2) AS relationships,
+                    COLLECT(r2.Hot_Technology) AS hot_tech_values,
+                    COLLECT(r2.In_Demand) AS in_demand_values
+                
+                // Calculate metrics
+                WITH s2, 
+                    SIZE(jobs) AS co_occurrence_frequency,
+                    REDUCE(s = 0.0, rel IN relationships | s + rel.importance) / SIZE(relationships) AS avg_importance,
+                    REDUCE(s = 0.0, rel IN relationships | s + rel.level) / SIZE(relationships) AS avg_level,
+                    // Check if any relationship has Hot_Technology or In_Demand as true
+                    CASE 
+                        WHEN SIZE(hot_tech_values) > 0 THEN ANY(hot IN hot_tech_values WHERE hot = true)
+                        ELSE false
+                    END AS hot_technology,
+                    CASE 
+                        WHEN SIZE(in_demand_values) > 0 THEN ANY(demand IN in_demand_values WHERE demand = true)
+                        ELSE false
+                    END AS in_demand
+                
+                // Get total jobs for each co-occurring skill (for rate calculation)
+                OPTIONAL MATCH (s2)<-[:REQUIRES]-(all_j:Job)
+                WITH s2, 
+                    co_occurrence_frequency,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    COUNT(DISTINCT all_j) AS total_jobs_for_s2
+                
+                // Calculate co-occurrence rate using the target skill's job count as denominator
+                WITH s2, 
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    CASE 
+                        WHEN $total_target_jobs > 0 
+                        THEN toFloat(co_occurrence_frequency) / toFloat($total_target_jobs) * 100
+                        ELSE 0 
+                    END AS co_occurrence_rate
+                
+                // Calculate LIFT: P(A&B) / (P(A) * P(B))
+                // P(A) = total_target_jobs / total_all_jobs
+                // P(B) = total_jobs_for_s2 / total_all_jobs
+                // P(A&B) = co_occurrence_frequency / total_all_jobs
+                WITH s2, 
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    co_occurrence_rate,
+                    $total_target_jobs AS target_jobs,
+                    $total_all_jobs AS all_jobs,
+                    CASE 
+                        WHEN $total_target_jobs > 0 AND total_jobs_for_s2 > 0 AND $total_all_jobs > 0
+                        THEN (toFloat(co_occurrence_frequency) * toFloat($total_all_jobs)) / 
+                            (toFloat($total_target_jobs) * toFloat(total_jobs_for_s2))
+                        ELSE 0
+                    END AS lift
+                
+                // Calculate CHI-SQUARE: ((ad - bc)^2 * N) / ((a+b)(c+d)(a+c)(b+d))
+                WITH s2, 
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    co_occurrence_rate,
+                    lift,
+                    target_jobs,
+                    all_jobs,
+                    co_occurrence_frequency AS a,
+                    target_jobs - co_occurrence_frequency AS b,
+                    total_jobs_for_s2 - co_occurrence_frequency AS c,
+                    all_jobs - (co_occurrence_frequency + (target_jobs - co_occurrence_frequency) + (total_jobs_for_s2 - co_occurrence_frequency)) AS d,
+                    CASE 
+                        WHEN target_jobs > 0 AND total_jobs_for_s2 > 0 AND all_jobs > 0
+                        THEN (target_jobs + total_jobs_for_s2 - co_occurrence_frequency) <= all_jobs
+                        ELSE false
+                    END AS is_valid
+                
+                // Calculate chi-square safely
+                WITH s2, 
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    co_occurrence_rate,
+                    lift,
+                    a, b, c, d, all_jobs,
+                    CASE 
+                        WHEN is_valid AND (a + b) > 0 AND (c + d) > 0 AND (a + c) > 0 AND (b + d) > 0
+                        THEN (toFloat((a * d) - (b * c)) * toFloat((a * d) - (b * c)) * toFloat(all_jobs)) / 
+                            (toFloat((a + b)) * toFloat((c + d)) * toFloat((a + c)) * toFloat((b + d)))
+                        ELSE 0
+                    END AS chi_square
+                
+                // Determine significance (p < 0.05 for chi-square > 3.84 with 1 df)
+                WITH s2, 
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    co_occurrence_rate,
+                    lift,
+                    chi_square,
+                    CASE 
+                        WHEN chi_square > 3.84 THEN true
+                        ELSE false
+                    END AS is_significant,
+                    // Determine correlation type based on lift
+                    CASE 
+                        WHEN lift > 1.5 THEN 'strong_positive'
+                        WHEN lift > 1.1 THEN 'moderate_positive'
+                        WHEN lift > 0.9 THEN 'neutral'
+                        WHEN lift > 0.5 THEN 'moderate_negative'
+                        ELSE 'strong_negative'
+                    END AS correlation_type
+                
+                RETURN s2.name AS name,
+                    s2.classification AS classification,
+                    co_occurrence_frequency AS frequency,
+                    total_jobs_for_s2 AS usage_count,
+                    co_occurrence_rate,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    lift,
+                    chi_square,
+                    is_significant,
+                    correlation_type
+                // FIXED: Order by lift first, then by frequency (raw count) to ensure distinct ordering
+                ORDER BY lift DESC, co_occurrence_frequency DESC, co_occurrence_rate DESC
+                LIMIT $query_limit
+                """,
+                skill_name=skill_name,
+                total_target_jobs=total_target_jobs,
+                total_all_jobs=total_all_jobs,
+                query_limit=query_limit
+            )
+            
+            skills = []
+            async for record in result:
+                classifications = record.get("classification", []) or []
+                skill_type = self._determine_skill_type(classifications)
+                
+                # Generate ID from name
+                name = record["name"]
+                skill_id = re.sub(r'[^a-zA-Z0-9]', '_', name.lower())
+                skill_id = re.sub(r'_+', '_', skill_id).strip('_')
+                
+                # Scale importance (0-5) to percentage (0-100)
+                avg_importance = record.get("avg_importance")
+                if avg_importance is not None:
+                    try:
+                        avg_importance = round(float(avg_importance) * 20, 1)
+                    except:
+                        avg_importance = 0
+                else:
+                    avg_importance = 0
+                
+                # Scale level (0-7) to percentage (0-100)
+                avg_level = record.get("avg_level")
+                if avg_level is not None:
+                    try:
+                        avg_level = round(float(avg_level) * 14.3, 1)
+                    except:
+                        avg_level = 0
+                    else:
+                        avg_level = 0
+                
+                # Get hot_technology and in_demand flags - ensure they're booleans
+                hot_technology = record.get("hot_technology", False)
+                in_demand = record.get("in_demand", False)
+                
+                # Ensure they're actual booleans
+                if hot_technology is None:
+                    hot_technology = False
+                if in_demand is None:
+                    in_demand = False
+                
+                # Ensure co_occurrence_rate is never None
+                co_occurrence_rate = record.get("co_occurrence_rate")
+                if co_occurrence_rate is None:
+                    co_occurrence_rate = 0
+                
+                # Get lift and chi-square values
+                lift = record.get("lift", 0)
+                if lift is None:
+                    lift = 0
+                chi_square = record.get("chi_square", 0)
+                if chi_square is None:
+                    chi_square = 0
+                is_significant = record.get("is_significant", False)
+                correlation_type = record.get("correlation_type", "neutral")
+                
+                skills.append({
+                    "id": skill_id,
+                    "name": name,
+                    "type": skill_type,
+                    "frequency": record.get("frequency", 0),
+                    "usage_count": record.get("usage_count", 0),
+                    "co_occurrence_rate": round(float(co_occurrence_rate), 1),
+                    "avg_importance": avg_importance,
+                    "avg_level": avg_level,
+                    "hot_technology": hot_technology,
+                    "in_demand": in_demand,
+                    "demand_trend": 0,
+                    "salary_association": 0,
+                    "lift": round(float(lift), 2),
+                    "chi_square": round(float(chi_square), 2),
+                    "is_significant": is_significant,
+                    "correlation_type": correlation_type
+                })
+            
+            # Remove any remaining duplicates just in case (by name)
+            unique_skills = []
+            seen_names = set()
+            for skill in skills:
+                if skill["name"] not in seen_names:
+                    seen_names.add(skill["name"])
+                    unique_skills.append(skill)
+            
+            # If limit is provided, apply it, otherwise return all
+            if limit is not None:
+                return unique_skills[:limit]
+            else:
+                return unique_skills
+        
+    # -------------------------
+    # Get Skill Correlations - NEW METHOD
+    # -------------------------
+    async def get_skill_correlations(
+        self, 
+        skill_name: str,
+        min_lift: float = 1.0,
+        only_significant: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get detailed correlation analysis for a skill including lift and chi-square statistics.
+        
+        Args:
+            skill_name: Name of the skill
+            min_lift: Minimum lift value to include (default 1.0)
+            only_significant: Only return statistically significant correlations
+        
+        Returns:
+            Dictionary with correlation analysis
+        """
+        if not skill_name:
+            return {"correlations": [], "summary": {}}
+        
+        # Get all co-occurring skills with lift and chi-square
+        all_skills = await self.get_co_occurring_skills_with_correlation(skill_name, limit=None)
+        
+        # Filter based on parameters
+        filtered_skills = []
+        for skill in all_skills:
+            lift = skill.get("lift", 0)
+            is_significant = skill.get("is_significant", False)
+            
+            if lift >= min_lift and (not only_significant or is_significant):
+                filtered_skills.append(skill)
+        
+        # Calculate summary statistics
+        if filtered_skills:
+            lifts = [s.get("lift", 0) for s in filtered_skills]
+            chi_squares = [s.get("chi_square", 0) for s in filtered_skills if s.get("chi_square", 0) > 0]
+            
+            summary = {
+                "total_correlations": len(filtered_skills),
+                "avg_lift": round(sum(lifts) / len(lifts), 2) if lifts else 0,
+                "max_lift": max(lifts) if lifts else 0,
+                "min_lift": min(lifts) if lifts else 0,
+                "significant_count": sum(1 for s in filtered_skills if s.get("is_significant", False)),
+                "correlation_types": {
+                    "strong_positive": sum(1 for s in filtered_skills if s.get("correlation_type") == "strong_positive"),
+                    "moderate_positive": sum(1 for s in filtered_skills if s.get("correlation_type") == "moderate_positive"),
+                    "neutral": sum(1 for s in filtered_skills if s.get("correlation_type") == "neutral"),
+                    "moderate_negative": sum(1 for s in filtered_skills if s.get("correlation_type") == "moderate_negative"),
+                    "strong_negative": sum(1 for s in filtered_skills if s.get("correlation_type") == "strong_negative")
+                }
+            }
+        else:
+            summary = {
+                "total_correlations": 0,
+                "avg_lift": 0,
+                "max_lift": 0,
+                "min_lift": 0,
+                "significant_count": 0,
+                "correlation_types": {}
+            }
+        
+        # Sort by lift descending
+        filtered_skills.sort(key=lambda x: x.get("lift", 0), reverse=True)
+        
+        return {
+            "correlations": filtered_skills,
+            "summary": summary
+        }
     
     # -------------------------
     # Get Top Jobs Requiring Skill - UPDATED to get all jobs
@@ -540,17 +914,26 @@ class SkillRepo:
     async def get_skill_network_graph(
         self,
         skill_name: str,
-        limit: int = 10
+        limit: int = 10,
+        include_correlation: bool = False
     ) -> Dict[str, List]:
         """
         Get data formatted for undirected network graph visualization.
         Returns nodes and links for the top co-occurring skills.
+        
+        Args:
+            skill_name: Name of the skill
+            limit: Maximum number of co-occurring skills to include
+            include_correlation: Whether to include correlation data (lift, significance)
         """
         if not skill_name:
             return {"nodes": [], "links": []}
         
-        # Get co-occurring skills
-        co_occurring = await self.get_co_occurring_skills(skill_name, limit)
+        # Get co-occurring skills - use correlation version if requested
+        if include_correlation:
+            co_occurring = await self.get_co_occurring_skills_with_correlation(skill_name, limit)
+        else:
+            co_occurring = await self.get_co_occurring_skills(skill_name, limit)
         
         # Create nodes array
         nodes = []
@@ -559,17 +942,24 @@ class SkillRepo:
         main_skill_id = re.sub(r'[^a-zA-Z0-9]', '_', skill_name.lower())
         main_skill_id = re.sub(r'_+', '_', main_skill_id).strip('_')
         
-        nodes.append({
+        main_node = {
             "id": main_skill_id,
             "name": skill_name,
             "group": "1",
             "value": 30,
             "usage_count": None
-        })
+        }
+        
+        # Add correlation fields if available
+        if include_correlation:
+            main_node["lift"] = None
+            main_node["is_significant"] = None
+        
+        nodes.append(main_node)
         
         # Add co-occurring skill nodes
         for i, skill in enumerate(co_occurring):
-            nodes.append({
+            node = {
                 "id": skill["id"],
                 "name": skill["name"],
                 "group": "2",
@@ -578,17 +968,31 @@ class SkillRepo:
                 "co_occurrence_rate": skill.get("co_occurrence_rate", 0),
                 "avg_importance": skill.get("avg_importance", 0),
                 "avg_level": skill.get("avg_level", 0)
-            })
+            }
+            
+            # Add correlation fields if available
+            if include_correlation:
+                node["lift"] = skill.get("lift", 0)
+                node["is_significant"] = skill.get("is_significant", False)
+            
+            nodes.append(node)
         
         # Create undirected links
         links = []
         for skill in co_occurring:
-            links.append({
+            link = {
                 "source": main_skill_id,
                 "target": skill["id"],
                 "value": skill.get("co_occurrence_rate", 50) / 10,
                 "co_occurrence_rate": skill.get("co_occurrence_rate", 0)
-            })
+            }
+            
+            # Add correlation fields if available
+            if include_correlation:
+                link["lift"] = skill.get("lift", 0)
+                link["is_significant"] = skill.get("is_significant", False)
+            
+            links.append(link)
         
         return {
             "nodes": nodes,
@@ -596,11 +1000,19 @@ class SkillRepo:
         }
     
     # -------------------------
-    # Get Complete Skill Detail
+    # Get Complete Skill Detail - UPDATED to optionally include correlations
     # -------------------------
-    async def get_complete_skill_detail(self, skill_name: str) -> Optional[Dict[str, Any]]:
+    async def get_complete_skill_detail(
+        self, 
+        skill_name: str,
+        include_correlations: bool = False
+    ) -> Optional[Dict[str, Any]]:
         """
         Get complete skill details from Neo4j
+        
+        Args:
+            skill_name: Name of the skill
+            include_correlations: Whether to include lift/chi-square correlation analysis
         """
         if not skill_name:
             return None
@@ -624,16 +1036,34 @@ class SkillRepo:
             metrics_task = self.get_skill_metrics(skill_name)
             usage_task = self.get_skill_usage(skill_name)
             tech_flags_task = self.get_tech_skill_flags(skill_name)
-            # Get ALL co-occurring skills by passing limit=None
-            co_occurring_task = self.get_co_occurring_skills(skill_name, limit=None)
-            network_graph_task = self.get_skill_network_graph(skill_name, 10)
-            # Get ALL jobs
+            
+            # Get co-occurring skills - use correlation version if requested
+            if include_correlations:
+                co_occurring_task = self.get_co_occurring_skills_with_correlation(skill_name, limit=None)
+                correlations_task = self.get_skill_correlations(skill_name, min_lift=1.0)
+            else:
+                co_occurring_task = self.get_co_occurring_skills(skill_name, limit=None)
+                correlations_task = None
+            
+            network_graph_task = self.get_skill_network_graph(
+                skill_name, 10, include_correlation=include_correlations
+            )
             top_jobs_task = self.get_top_jobs_for_skill(skill_name, 6)
             
-            metrics, usage, tech_flags, co_occurring, network_graph, top_jobs = await asyncio.gather(
-                metrics_task, usage_task, tech_flags_task, co_occurring_task, network_graph_task, top_jobs_task,
-                return_exceptions=True
-            )
+            # Gather tasks
+            tasks = [metrics_task, usage_task, tech_flags_task, co_occurring_task, network_graph_task, top_jobs_task]
+            if correlations_task:
+                tasks.append(correlations_task)
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            metrics = results[0]
+            usage = results[1]
+            tech_flags = results[2]
+            co_occurring = results[3]
+            network_graph = results[4]
+            top_jobs = results[5]
+            correlations = results[6] if len(results) > 6 else None
             
             # Handle any exceptions
             if isinstance(metrics, Exception):
@@ -670,6 +1100,10 @@ class SkillRepo:
             if isinstance(top_jobs, Exception):
                 print(f"Error getting top jobs: {top_jobs}")
                 top_jobs = []
+            
+            if correlations and isinstance(correlations, Exception):
+                print(f"Error getting correlations: {correlations}")
+                correlations = None
             
             # Format metrics for UI - CONDITIONAL BASED ON SKILL TYPE
             ui_metrics = []
@@ -735,7 +1169,8 @@ class SkillRepo:
             skill_id = re.sub(r'[^a-zA-Z0-9]', '_', skill_name.lower())
             skill_id = re.sub(r'_+', '_', skill_id).strip('_')
             
-            return {
+            # Build response
+            response = {
                 "basic_info": {
                     "skill_id": skill_id,
                     "skill_name": skill_name,
@@ -751,6 +1186,12 @@ class SkillRepo:
                 "top_jobs": top_jobs,
                 "total_jobs_count": usage.get("total_jobs", 0)
             }
+            
+            # Add correlation analysis if requested and available
+            if include_correlations and correlations:
+                response["correlation_analysis"] = correlations
+            
+            return response
             
         except Exception as e:
             print(f"Error in get_complete_skill_detail: {e}")

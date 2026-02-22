@@ -37,6 +37,11 @@ export type CoOccurringSkill = {
   avg_level?: number;
   hot_technology?: boolean;
   in_demand?: boolean;
+  // Lift and correlation fields
+  lift?: number;              // Lift value (>1 = positive correlation)
+  chi_square?: number;        // Chi-square statistic
+  is_significant?: boolean;   // Whether correlation is statistically significant
+  correlation_type?: string;   // 'strong_positive', 'moderate_positive', 'neutral', 'moderate_negative', 'strong_negative'
 };
 
 export type JobRequiringSkill = {
@@ -48,7 +53,6 @@ export type JobRequiringSkill = {
   employment?: number;
   hot_technology?: boolean;
   in_demand?: boolean;
-  // No salary_year_note field
 };
 
 export type NetworkNode = {
@@ -60,6 +64,8 @@ export type NetworkNode = {
   co_occurrence_rate?: number;
   avg_importance?: number;
   avg_level?: number;
+  lift?: number;              // Lift value for the node
+  is_significant?: boolean;   // Significance flag for the node
 };
 
 export type NetworkLink = {
@@ -67,11 +73,33 @@ export type NetworkLink = {
   target: string;
   value: number;
   co_occurrence_rate?: number;
+  lift?: number;              // Lift value for the link
+  is_significant?: boolean;   // Significance flag for the link
 };
 
 export type NetworkGraph = {
   nodes: NetworkNode[];
   links: NetworkLink[];
+};
+
+export type CorrelationSummary = {
+  total_correlations: number;
+  avg_lift: number;
+  max_lift: number;
+  min_lift: number;
+  significant_count: number;
+  correlation_types: {
+    strong_positive: number;
+    moderate_positive: number;
+    neutral: number;
+    moderate_negative: number;
+    strong_negative: number;
+  };
+};
+
+export type CorrelationAnalysis = {
+  correlations: CoOccurringSkill[];
+  summary: CorrelationSummary;
 };
 
 export type SkillDetailResponse = {
@@ -83,6 +111,7 @@ export type SkillDetailResponse = {
   top_jobs: JobRequiringSkill[];
   total_jobs_count: number;
   network_graph?: NetworkGraph;
+  correlation_analysis?: CorrelationAnalysis;
   year?: number;
 };
 
@@ -96,8 +125,15 @@ export type SkillSearchResult = {
 export const SkillsAPI = {
   // Get complete skill details with required year
   getDetail: (skillId: string, year: number) => {
+    // The API might expect the skill name as a query parameter, not in the path
+    // Try both formats - first as path parameter, if that fails, the API route will handle it
     return apiGet<SkillDetailResponse>(`/skills/${encodeURIComponent(skillId)}`, { year });
   },
+
+  // Alternative: If the API expects skill name as query param
+  // getDetail: (skillId: string, year: number) => {
+  //   return apiGet<SkillDetailResponse>("/skills", { skill_name: skillId, year });
+  // },
 
   // Search skills
   search: (query: string, limit = 10) =>

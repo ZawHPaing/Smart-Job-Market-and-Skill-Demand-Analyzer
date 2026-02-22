@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ArrowUpDown } from 'lucide-react';
+import { Search, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
@@ -87,15 +87,15 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 const Jobs = () => {
-  const { year } = useYear(); // Get year from context like Industries page
+  const { year } = useYear();
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
-  const [currentPage, setCurrentPage] = useState(1);
   const [sortBy, setSortBy] = useState<SortBy>('employment');
   const [activeChart, setActiveChart] = useState<'employment' | 'salary'>('employment');
-  const [showMore, setShowMore] = useState(false);
-  const [allPage, setAllPage] = useState(1);
-  const ALL_PAGE_SIZE = 24;
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 24;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,10 +111,10 @@ const Jobs = () => {
   // Cache for API responses
   const apiCache = useRef<Map<string, any>>(new Map());
 
-  // Reset page when search changes
+  // Reset to page 1 when search or sort changes
   useEffect(() => {
-    setAllPage(1);
-  }, [searchInput, showMore]);
+    setCurrentPage(1);
+  }, [searchInput, sortBy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -314,7 +314,7 @@ const Jobs = () => {
       );
   }, [allJobs, debouncedSearch]);
 
-  // Separate top jobs from the rest for "Show more" functionality
+  // Separate top jobs from the rest
   const topJobsSet = useMemo(() => {
     return new Set((topJobs || []).map(j => j.occ_code));
   }, [topJobs]);
@@ -332,15 +332,15 @@ const Jobs = () => {
     return filteredJobs.filter(job => !topJobsSet.has(job.occ_code));
   }, [filteredJobs, topJobsSet]);
 
-  const totalAllPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredJobsNoTop.length / ALL_PAGE_SIZE)),
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredJobsNoTop.length / PAGE_SIZE)),
     [filteredJobsNoTop.length]
   );
 
   const pagedJobs = useMemo(() => {
-    const start = (allPage - 1) * ALL_PAGE_SIZE;
-    return filteredJobsNoTop.slice(start, start + ALL_PAGE_SIZE);
-  }, [filteredJobsNoTop, allPage]);
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredJobsNoTop.slice(start, start + PAGE_SIZE);
+  }, [filteredJobsNoTop, currentPage]);
 
   // Format top jobs for horizontal bar chart - memoized
   const chartData = useMemo(() => {
@@ -372,6 +372,7 @@ const Jobs = () => {
       {
         title: 'Avg Job Growth',
         value: metrics.avg_job_growth_pct,
+        suffix: '%',
         color: 'green' as const,
       },
       {
@@ -392,8 +393,16 @@ const Jobs = () => {
   // Handle sort change
   const handleSortChange = useCallback((newSort: SortBy) => {
     setSortBy(newSort);
-    setAllPage(1);
   }, []);
+
+  // Handle page change
+  const goToPrevPage = useCallback(() => {
+    setCurrentPage((p) => Math.max(1, p - 1));
+  }, []);
+
+  const goToNextPage = useCallback(() => {
+    setCurrentPage((p) => Math.min(totalPages, p + 1));
+  }, [totalPages]);
 
   // Show loading state
   if (loading) {
@@ -558,21 +567,18 @@ const Jobs = () => {
 
         {/* Job Listings Grid */}
         <Card className="glass-card">
-          <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <CardHeader>
             <SectionHeader
               title="All Job Titles"
-              subtitle={`Showing ${filteredJobs.length} of ${allJobs.length} jobs`}
+              subtitle={`Showing ${filteredJobs.length.toLocaleString()} of ${allJobs.length.toLocaleString()} jobs`}
             />
-            <Button variant="secondary" onClick={() => setShowMore((v) => !v)}>
-              {showMore ? "Hide" : "See more"}
-            </Button>
           </CardHeader>
           <CardContent>
             {/* Top Jobs Section (always visible) */}
             {filteredTopJobs.length > 0 && (
               <>
                 <h3 className="text-sm font-medium text-muted-foreground mb-3">Top Jobs</h3>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-6">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-8">
                   {filteredTopJobs.map((job) => (
                       <Link
                         key={job.occ_code}
@@ -603,77 +609,78 @@ const Jobs = () => {
               </>
             )}
 
-            {/* Show More Section */}
-            {showMore && (
+            {/* All Jobs Section with Pagination */}
+            {filteredJobsNoTop.length > 0 ? (
               <>
-                {filteredJobsNoTop.length > 0 && (
-                  <>
-                    <h3 className="text-sm font-medium text-muted-foreground mb-3">All Jobs</h3>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                      {pagedJobs.map((job) => (
-                        <Link
-                          key={job.occ_code}
-                          to={`/jobs/${encodeURIComponent(job.occ_code)}`}
-                          className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
-                        >
-                          <div className="space-y-1">
-                            <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
-                              {job.occ_title}
-                            </p>
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                              <span>{fmtMSafe(job.total_employment)} employed</span>
-                              <span>•</span>
-                              <span className="text-xs">{job.occ_code}</span>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-lg font-semibold text-cyan">
-                              {fmtMoneySafe(job.a_median)}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              median salary
-                            </p>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-
-                    {/* Pagination Controls */}
-                    {totalAllPages > 1 && (
-                      <div className="mt-6 flex items-center justify-between">
-                        <p className="text-sm text-muted-foreground">
-                          Page {allPage} of {totalAllPages}
+                <h3 className="text-sm font-medium text-muted-foreground mb-3">All Jobs</h3>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {pagedJobs.map((job) => (
+                    <Link
+                      key={job.occ_code}
+                      to={`/jobs/${encodeURIComponent(job.occ_code)}`}
+                      className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
+                    >
+                      <div className="space-y-1">
+                        <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
+                          {job.occ_title}
                         </p>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="secondary"
-                            disabled={allPage <= 1}
-                            onClick={() => setAllPage((p) => Math.max(1, p - 1))}
-                          >
-                            Prev
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            disabled={allPage >= totalAllPages}
-                            onClick={() => setAllPage((p) => Math.min(totalAllPages, p + 1))}
-                          >
-                            Next
-                          </Button>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <span>{fmtMSafe(job.total_employment)} employed</span>
+                          <span>•</span>
+                          <span className="text-xs">{job.occ_code}</span>
                         </div>
                       </div>
-                    )}
-                  </>
+                      <div className="text-right">
+                        <p className="text-lg font-semibold text-cyan">
+                          {fmtMoneySafe(job.a_median)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          median salary
+                        </p>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="mt-6 flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">
+                      Page {currentPage} of {totalPages} 
+                      {filteredJobsNoTop.length > 0 && (
+                        <> (showing {(currentPage - 1) * PAGE_SIZE + 1} - {Math.min(currentPage * PAGE_SIZE, filteredJobsNoTop.length)} of {filteredJobsNoTop.length})</>
+                      )}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={goToPrevPage}
+                        disabled={currentPage <= 1}
+                      >
+                        <ChevronLeft className="h-4 w-4 mr-1" />
+                        Prev
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={goToNextPage}
+                        disabled={currentPage >= totalPages}
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </>
-            )}
-            
-            {/* No Results Message */}
-            {filteredJobs.length === 0 && (
+            ) : (
+              /* No Results Message */
               <div className="text-center py-12 text-muted-foreground">
                 {searchInput ? (
                   <>No jobs found matching "{searchInput}"</>
                 ) : (
-                  <>No jobs data available</>
+                  <>No additional jobs data available</>
                 )}
               </div>
             )}

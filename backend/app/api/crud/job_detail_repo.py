@@ -663,6 +663,7 @@ class JobDetailRepo:
         soft_skills_list.sort(key=lambda x: x["value"], reverse=True)
         
         # Generate metrics
+        # Generate metrics
         metrics = []
         if basic_info:
             total_employment = _to_float(basic_info.get("tot_emp", 0))
@@ -681,21 +682,16 @@ class JobDetailRepo:
                 },
                 {
                     "title": "Job Trend",
-                    "value": f"{growth_trend:+.1f}%",
+                    "value": growth_trend,  # Keep as number, frontend will add % sign
                     "trend": {"value": abs(growth_trend), "direction": growth_direction},
-                    "color": "green"
-                },
-                {
-                    "title": "Experience Required",
-                    "value": experience,
-                    "color": "purple"
+                    "color": "green",
+                    "suffix": "%"  # Add suffix for percentage
                 },
                 {
                     "title": "Top Industry",
-                    "value": industry["naics_title"] if industry else "Various",  # Just the title, no code
+                    "value": industry["naics_title"] if industry else "Various",
                     "color": "coral",
-                    "format": "industry"  # Keep the format for any special handling
-                    # Removed the suffix with NAICS code
+                    "format": "industry"
                 },
                 {
                     "title": "Median Annual Salary",

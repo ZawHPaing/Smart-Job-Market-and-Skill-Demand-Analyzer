@@ -305,8 +305,8 @@ class ForecastRepo:
             "model_weights": {k: round(v, 3) for k, v in model_weights.items()}
         }
 
-    async def get_top_jobs(self, limit: int = 8) -> List[Dict]:
-        """Get top jobs - using cross-industry data"""
+    async def get_top_jobs(self, limit: int = 100) -> List[Dict]:
+        """Get top jobs - using cross-industry data (increased limit for pagination)"""
         pipeline = [
             {
                 "$match": {
@@ -1086,7 +1086,7 @@ class ForecastRepo:
         print(f"✅ Loaded historical data for {len(historical_by_naics)} industries")
         
         # ==========================================================
-        # GET TOP 10 INDUSTRIES - ENSURE NO DUPLICATES AND ALL ARE PRESENT
+        # GET TOP 10 INDUSTRIES FOR VISUALIZATION - STILL NEED TOP 10 FOR CHART
         # ==========================================================
         print("\n📊 Selecting top 10 unique industries for visualization...")
         
@@ -1155,7 +1155,7 @@ class ForecastRepo:
         
         all_years = list(range(2011, forecast_year + 1))
         
-        # Build time series for top 10 industries
+        # Build time series for top 10 industries (for the chart)
         top_10_time_series = []
         
         for year in all_years:
@@ -1192,11 +1192,11 @@ class ForecastRepo:
         
         print(f"✅ Built time series with {len(top_10_time_series)} years for top {len(top_10_industries)} industries")
         
-        # Get top jobs
-        top_jobs = await self.get_top_jobs(8)
+        # Get ALL top jobs (increased limit for pagination)
+        all_top_jobs = await self.get_top_jobs(limit=200)  # Get up to 200 jobs for pagination
         
         job_forecasts = []
-        for job in top_jobs:
+        for job in all_top_jobs:
             forecast = await self.forecast_job(
                 job["occ_code"], 
                 job["title"], 
@@ -1250,7 +1250,7 @@ class ForecastRepo:
         print(f"  industries_forecasted: {len(industry_forecasts)}")
         print(f"{'='*60}")
         
-        # AI jobs estimate
+        # AI jobs estimate (keeping for reference but not using in metrics)
         ai_jobs = [j for j in job_forecasts if any(term in j["title"].lower() 
                 for term in ["ai", "machine learning", "data scientist", "ml", "artificial intelligence", "data science"])]
         ai_forecast = sum(j.get(f"forecast_{forecast_year}", 0) for j in ai_jobs) if ai_jobs else 48000
@@ -1266,34 +1266,31 @@ class ForecastRepo:
             confidence_level = "Low"
             confidence_pct = 70
         
-        # Prepare top jobs forecast
-        top_jobs_forecast = []
-        for job in sorted(job_forecasts, key=lambda x: x.get(f"forecast_{forecast_year}", 0), reverse=True)[:8]:
+        # Prepare ALL jobs forecast (not just top 8)
+        all_jobs_forecast = []
+        for job in sorted(job_forecasts, key=lambda x: x.get(f"forecast_{forecast_year}", 0), reverse=True):
             forecast_key = f"forecast_{forecast_year}"
-            top_jobs_forecast.append({
+            all_jobs_forecast.append({
                 "name": job["title"],
                 "value": job.get(forecast_key, 0),
                 "growth": job["growth_rate"]
             })
         
-        # Prepare industry composition (top 10) - using the SAME industry list
-        industry_composition = []
-        for ind in top_10_industries:  # Use same list as graph
-            forecast_key = f"forecast_{forecast_year}"
-            industry_composition.append({
-                "industry": ind["industry"],  # Full name
-                "current": ind["current"],
-                "forecast": ind.get(forecast_key, 0),
-                "confidence_lower": ind["confidence_interval"]["lower"],
-                "confidence_upper": ind["confidence_interval"]["upper"]
-            })
-        
-        # Prepare industry details (top 20)
-        industry_details = []
-        for ind in sorted(industry_forecasts, key=lambda x: x["current"], reverse=True)[:20]:
+        # Prepare ALL industry details (not just top 20)
+        # Prepare ALL industry details (not just top 20)
+        all_industry_details = []
+
+        # Split industries into high confidence (>=85%) and low confidence (<85%)
+        high_confidence = []
+        low_confidence = []
+
+        for ind in industry_forecasts:
             forecast_key = f"forecast_{forecast_year}"
             forecast_val = ind.get(forecast_key, 0)
             change = ((forecast_val - ind["current"]) / ind["current"]) * 100 if ind["current"] > 0 else 0
+            
+            # Calculate confidence score (100% - MAPE)
+            confidence_score = 100 - ind["backtest_metrics"]["mape"]
             
             if ind["backtest_metrics"]["mape"] < 10:
                 confidence = "High"
@@ -1302,68 +1299,95 @@ class ForecastRepo:
             else:
                 confidence = "Low"
             
-            industry_details.append({
+            industry_detail = {
                 "industry": ind["industry"],
                 "current": ind["current"],
                 "forecast": forecast_val,
                 "change": round(change, 1),
                 "confidence": confidence,
+                "confidence_score": round(confidence_score, 1),
                 "mape": ind["backtest_metrics"]["mape"],
                 "lower_bound": ind["confidence_interval"]["lower"],
                 "upper_bound": ind["confidence_interval"]["upper"]
-            })
+            }
+            
+            # Split based on confidence score
+            if confidence_score >= 85:
+                high_confidence.append(industry_detail)
+            else:
+                low_confidence.append(industry_detail)
+
+        # Sort high confidence by current employment (highest first)
+        high_confidence.sort(key=lambda x: x["current"], reverse=True)
+
+        # Sort low confidence by current employment (highest first) 
+        low_confidence.sort(key=lambda x: x["current"], reverse=True)
+
+        # Combine: all high confidence first, then low confidence
+        all_industry_details = high_confidence + low_confidence
+
+        print(f"\n📊 Confidence Filtering:")
+        print(f"  - Industries with confidence ≥85%: {len(high_confidence)}")
+        print(f"  - Industries with confidence <85%: {len(low_confidence)} (moved to end)")
         
         metrics = [
-            {
-                "title": "Est. Total Employment (All Industries)",
-                "value": _safe_round(total_forecast),
-                "trend": {"value": round(abs(avg_growth), 1), "direction": "up" if avg_growth >= 0 else "down"},
-                "color": "cyan"
-            },
-            {
-                "title": "Est. Median Salary",
-                "value": 86500,
-                "prefix": "$",
-                "trend": {"value": 5.5, "direction": "up"},
-                "color": "purple"
-            },
-            {
-                "title": "Est. Job Growth",
-                "value": f"{'+' if avg_growth >= 0 else ''}{round(avg_growth, 1)}%",
-                "trend": {"value": abs(avg_growth), "direction": "up" if avg_growth >= 0 else "down"},
-                "color": "green"
-            },
-            {
-                "title": "Est. AI/ML Jobs",
-                "value": _safe_round(ai_forecast),
-                "trend": {"value": 38, "direction": "up"},
-                "color": "coral"
-            },
-            {
-                "title": "Forecast Confidence",
-                "value": f"{confidence_pct}%",
-                "color": "amber"
-            }
-        ]
+    {
+        "title": "Est. Total Employment (All Industries)",
+        "value": _safe_round(total_forecast),
+        "color": "cyan"
+    },
+    {
+        "title": "Est. Median Salary",
+        "value": 86500,
+        "prefix": "$",
+        "color": "purple"
+    },
+    {
+        "title": "Est. Job Growth",
+        "value": f"{'+' if avg_growth >= 0 else ''}{round(avg_growth, 1)}%",
+        "suffix": "%",  # Add % suffix
+        "color": "green"
+    },
+    {
+        "title": "Forecast Confidence",
+        "value": f"{100 - avg_mape:.0f}%",
+        "suffix": "%",  # Add % suffix
+        "color": "amber"
+    }
+]
+        
+        # Prepare industry composition (top 10) for backward compatibility
+        industry_composition = []
+        for ind in top_10_industries:
+            forecast_key = f"forecast_{forecast_year}"
+            industry_composition.append({
+                "industry": ind["industry"],
+                "current": ind["current"],
+                "forecast": ind.get(forecast_key, 0),
+                "confidence_lower": ind["confidence_interval"]["lower"],
+                "confidence_upper": ind["confidence_interval"]["upper"]
+            })
         
         return {
             "forecast_year": forecast_year,
             "metrics": metrics,
             "industry_composition": industry_composition,
-            "employment_forecast": top_10_time_series,  # Top 10 with actual historical data
-            "top_jobs_forecast": top_jobs_forecast,
-            "industry_details": industry_details,
+            "employment_forecast": top_10_time_series,  # Top 10 with actual historical data (for chart)
+            "top_jobs_forecast": all_jobs_forecast,  # NOW SENDS ALL JOBS (200+ jobs)
+            "industry_details": all_industry_details,  # NOW SENDS ALL INDUSTRIES (all deduplicated industries)
             "backtest_summary": {
                 "average_mape": round(avg_mape, 2),
                 "total_industries_forecasted": len(industry_forecasts),
+                "total_jobs_forecasted": len(job_forecasts),
                 "model_popularity": model_popularity
             },
             "totals": {
                 "current": _safe_round(total_current),
                 "forecast": _safe_round(total_forecast),
                 "growth_rate": round(avg_growth, 2),
-                "industries_included": len(industry_forecasts)
+                "industries_included": len(industry_forecasts),
+                "jobs_included": len(job_forecasts)
             },
             "confidence_level": confidence_level,
-            "disclaimer": f"Total employment from BLS cross-industry data. Forecast based on {len(industry_forecasts)} individual industry projections. Average backtest MAPE: {avg_mape:.1f}%. Time series includes actual historical data from 2011-2024."
+            "disclaimer": f"Total employment from BLS cross-industry data. Forecast based on {len(industry_forecasts)} individual industry projections and {len(job_forecasts)} job titles. Average backtest MAPE: {avg_mape:.1f}%. Time series includes actual historical data from 2011-2024."
         }

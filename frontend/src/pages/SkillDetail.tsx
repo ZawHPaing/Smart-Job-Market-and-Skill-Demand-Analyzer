@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, Code, Briefcase, TrendingUp, Users, Calendar, Filter, ArrowRight } from 'lucide-react';
+import { useParams, Link, useLocation } from 'react-router-dom';
+import { ChevronLeft, Code, Briefcase, TrendingUp, Users, Calendar, Filter, ArrowRight, Sparkles } from 'lucide-react';
 import { DashboardLayout, useYear } from '@/components/layout';
 import { MetricsGrid, SectionHeader } from '@/components/dashboard';
 import { DonutChart, SkillNetworkGraph } from '@/components/charts';
@@ -13,6 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { SkillsAPI } from '@/lib/skills';
 import type { SkillDetailResponse, CoOccurringSkill } from '@/lib/skills';
 
@@ -142,6 +148,95 @@ const getValueColor = (skill: CoOccurringSkill): string => {
   }
 };
 
+// Helper function to get correlation badge color and text
+const getCorrelationBadge = (skill: CoOccurringSkill) => {
+  const correlationType = skill.correlation_type || 'neutral';
+  const isSignificant = skill.is_significant || false;
+  const lift = skill.lift || 1.0;
+  
+  if (!isSignificant) {
+    return {
+      text: 'Not significant',
+      color: 'bg-gray/10 text-gray border-gray/20',
+      icon: '⚪'
+    };
+  }
+  
+  switch(correlationType) {
+    case 'strong_positive':
+      return {
+        text: `Strong (${lift.toFixed(2)}x)`,
+        color: 'bg-green/10 text-green border-green/20',
+        icon: '🚀'
+      };
+    case 'moderate_positive':
+      return {
+        text: `Moderate (${lift.toFixed(2)}x)`,
+        color: 'bg-cyan/10 text-cyan border-cyan/20',
+        icon: '📈'
+      };
+    case 'neutral':
+      return {
+        text: `Neutral (${lift.toFixed(2)}x)`,
+        color: 'bg-amber/10 text-amber border-amber/20',
+        icon: '⚖️'
+      };
+    case 'moderate_negative':
+      return {
+        text: `Moderate (${lift.toFixed(2)}x)`,
+        color: 'bg-coral/10 text-coral border-coral/20',
+        icon: '📉'
+      };
+    case 'strong_negative':
+      return {
+        text: `Strong (${lift.toFixed(2)}x)`,
+        color: 'bg-red/10 text-red border-red/20',
+        icon: '⚠️'
+      };
+    default:
+      return {
+        text: `Lift: ${lift.toFixed(2)}x`,
+        color: 'bg-purple/10 text-purple border-purple/20',
+        icon: '🔗'
+      };
+  }
+};
+
+// Helper function to get correlation description
+const getCorrelationDescription = (skill: CoOccurringSkill): string => {
+  const correlationType = skill.correlation_type || 'neutral';
+  const isSignificant = skill.is_significant || false;
+  const chiSquare = skill.chi_square || 0;
+  const lift = skill.lift || 1.0;
+  
+  if (!isSignificant) {
+    return 'Not statistically significant (p ≥ 0.05)';
+  }
+  
+  let description = '';
+  switch(correlationType) {
+    case 'strong_positive':
+      description = 'Strongly correlated - appears together very frequently';
+      break;
+    case 'moderate_positive':
+      description = 'Moderately correlated - often appears together';
+      break;
+    case 'neutral':
+      description = 'No strong correlation - appears independently';
+      break;
+    case 'moderate_negative':
+      description = 'Moderately inverse correlation - rarely appears together';
+      break;
+    case 'strong_negative':
+      description = 'Strongly inverse correlation - almost never appears together';
+      break;
+    default:
+      description = 'Correlation analysis available';
+  }
+  
+  return `${description} (Lift: ${lift.toFixed(2)}x, χ²: ${chiSquare.toFixed(2)})`;
+};
+
 // Helper function to calculate a composite score for sorting
 const getCompositeScore = (skill: CoOccurringSkill): number => {
   if (skill.type === 'tech') {
@@ -205,11 +300,16 @@ const cleanAndDeduplicateSkills = (skills: CoOccurringSkill[]): CoOccurringSkill
 const SkillDetail = () => {
   const { id } = useParams<{ id: string }>();
   const { year } = useYear();
+  const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [skillDetail, setSkillDetail] = useState<SkillDetailResponse | null>(null);
   const [networkFilter, setNetworkFilter] = useState<string>('same');
   const [nextSkillsFilter, setNextSkillsFilter] = useState<string>('all');
+  const [nextSkillsSort, setNextSkillsSort] = useState<'composite' | 'correlation'>('composite');
+
+  // Get the previous page from location state, default to jobs page
+  const previousPage = location.state?.from || '/jobs';
 
   useEffect(() => {
     let cancelled = false;
@@ -366,7 +466,9 @@ const SkillDetail = () => {
         usage_count: undefined,
         co_occurrence_rate: undefined,
         avg_importance: undefined,
-        avg_level: undefined
+        avg_level: undefined,
+        lift: undefined,
+        is_significant: undefined
       }
     ];
     
@@ -380,7 +482,9 @@ const SkillDetail = () => {
         usage_count: skill.usage_count,
         co_occurrence_rate: skill.co_occurrence_rate,
         avg_importance: skill.avg_importance,
-        avg_level: skill.avg_level
+        avg_level: skill.avg_level,
+        lift: skill.lift,
+        is_significant: skill.is_significant
       });
     });
     
@@ -389,13 +493,15 @@ const SkillDetail = () => {
       source: mainSkillId,
       target: skill.id,
       value: (skill.co_occurrence_rate || 50) / 10,
-      co_occurrence_rate: skill.co_occurrence_rate
+      co_occurrence_rate: skill.co_occurrence_rate,
+      lift: skill.lift,
+      is_significant: skill.is_significant
     }));
     
     return { nodes, links };
   }, [skillDetail, filteredNetworkSkills, id]);
 
-  // Filter skills for "What to Learn Next" based on selected filter
+  // Filter skills for "What to Learn Next" based on selected filter and sort
   const filteredNextSkills = useMemo(() => {
     if (!skillDetail?.co_occurring_skills) return [];
     
@@ -408,15 +514,30 @@ const SkillDetail = () => {
       );
     }
     
-    // Sort using composite score
+    // Sort based on selected sort option
     const sorted = [...filtered].sort((a, b) => {
-      const scoreA = getCompositeScore(a);
-      const scoreB = getCompositeScore(b);
-      return scoreB - scoreA;
+      switch(nextSkillsSort) {
+        case 'correlation':
+          // Sort by lift (higher is better), with significance as tiebreaker
+          const aSig = a.is_significant ? 100 : 0;
+          const bSig = b.is_significant ? 100 : 0;
+          const aLift = a.lift || 0;
+          const bLift = b.lift || 0;
+          
+          // Primary: lift value, Secondary: significance
+          if (Math.abs(bLift - aLift) > 0.01) {
+            return bLift - aLift;
+          }
+          return bSig - aSig;
+          
+        case 'composite':
+        default:
+          return getCompositeScore(b) - getCompositeScore(a);
+      }
     });
     
     return sorted;
-  }, [skillDetail, nextSkillsFilter]);
+  }, [skillDetail, nextSkillsFilter, nextSkillsSort]);
 
   // Sort jobs by employment (highest first)
   const sortedJobs = useMemo(() => {
@@ -448,11 +569,11 @@ const SkillDetail = () => {
       <DashboardLayout>
         <div className="space-y-4">
           <Link
-            to="/jobs"
+            to={previousPage}
             className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
-            Back to Jobs
+            Back to Job Details
           </Link>
           <Card className="glass-card border-coral/30">
             <CardContent className="p-6">
@@ -484,11 +605,11 @@ const SkillDetail = () => {
         {/* Back Button & Header */}
         <div>
           <Link
-            to="/jobs"
+            to={previousPage}
             className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
-            Back to Jobs
+            Back to Job Details
           </Link>
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-purple to-coral">
@@ -622,11 +743,69 @@ const SkillDetail = () => {
           </Card>
         </div>
 
-        {/* What to Learn Next - SIDESCROLL WITH FILTER */}
+        {/* Correlation Summary Card */}
+        {skillDetail.correlation_analysis && skillDetail.correlation_analysis.summary.total_correlations > 0 && (
+          <Card className="glass-card">
+            <CardHeader>
+              <SectionHeader
+                title="Correlation Analysis"
+                subtitle={`${skillDetail.correlation_analysis.summary.significant_count} statistically significant relationships found`}
+              />
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 rounded-lg bg-secondary/30">
+                  <p className="text-xs text-muted-foreground">Total Correlations</p>
+                  <p className="text-2xl font-bold text-cyan">{skillDetail.correlation_analysis.summary.total_correlations}</p>
+                </div>
+                <div className="p-4 rounded-lg bg-secondary/30">
+                  <p className="text-xs text-muted-foreground">Average Lift</p>
+                  <p className="text-2xl font-bold text-purple">{skillDetail.correlation_analysis.summary.avg_lift.toFixed(2)}x</p>
+                </div>
+                <div className="p-4 rounded-lg bg-secondary/30">
+                  <p className="text-xs text-muted-foreground">Max Lift</p>
+                  <p className="text-2xl font-bold text-green">{skillDetail.correlation_analysis.summary.max_lift.toFixed(2)}x</p>
+                </div>
+                <div className="p-4 rounded-lg bg-secondary/30">
+                  <p className="text-xs text-muted-foreground">Significant</p>
+                  <p className="text-2xl font-bold text-coral">{skillDetail.correlation_analysis.summary.significant_count}</p>
+                </div>
+              </div>
+              
+              {/* Correlation type breakdown */}
+              <div className="mt-4 flex flex-wrap gap-3">
+                {Object.entries(skillDetail.correlation_analysis.summary.correlation_types).map(([type, count]) => {
+                  if (count === 0) return null;
+                  const colors = {
+                    strong_positive: 'bg-green/10 text-green border-green/20',
+                    moderate_positive: 'bg-cyan/10 text-cyan border-cyan/20',
+                    neutral: 'bg-amber/10 text-amber border-amber/20',
+                    moderate_negative: 'bg-coral/10 text-coral border-coral/20',
+                    strong_negative: 'bg-red/10 text-red border-red/20'
+                  };
+                  const labels = {
+                    strong_positive: 'Strong Positive',
+                    moderate_positive: 'Moderate Positive',
+                    neutral: 'Neutral',
+                    moderate_negative: 'Moderate Negative',
+                    strong_negative: 'Strong Negative'
+                  };
+                  return (
+                    <Badge key={type} variant="outline" className={colors[type as keyof typeof colors]}>
+                      {labels[type as keyof typeof labels]}: {count}
+                    </Badge>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* What to Learn Next - SIDESCROLL WITH FILTER AND SORT */}
         {filteredNextSkills.length > 0 ? (
           <Card className="glass-card">
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-4">
                 <div>
                   <SectionHeader
                     title="What Skills to Learn Next?"
@@ -637,46 +816,90 @@ const SkillDetail = () => {
                     }`}
                   />
                 </div>
-                {availableTypes.length > 0 && (
-                  <Select value={nextSkillsFilter} onValueChange={setNextSkillsFilter}>
-                    <SelectTrigger className="w-[180px] bg-secondary/50">
-                      <Filter className="h-3 w-3 mr-2" />
-                      <SelectValue placeholder="Filter by type" />
+                <div className="flex gap-2">
+                  {/* Sort dropdown - now with just 2 options */}
+                  <Select value={nextSkillsSort} onValueChange={(v) => setNextSkillsSort(v as 'composite' | 'correlation')}>
+                    <SelectTrigger className="w-[160px] bg-secondary/50">
+                      <Sparkles className="h-3 w-3 mr-2" />
+                      <SelectValue placeholder="Sort by" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Types</SelectItem>
-                      {availableTypes.map(type => (
-                        <SelectItem key={type} value={type}>
-                          {classificationConfig[type]?.name || type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                        </SelectItem>
-                      ))}
+                      <SelectItem value="composite">Recommended</SelectItem>
+                      <SelectItem value="correlation">Strongest Correlation</SelectItem>
                     </SelectContent>
                   </Select>
-                )}
+                  
+                  {/* Filter dropdown */}
+                  {availableTypes.length > 0 && (
+                    <Select value={nextSkillsFilter} onValueChange={setNextSkillsFilter}>
+                      <SelectTrigger className="w-[180px] bg-secondary/50">
+                        <Filter className="h-3 w-3 mr-2" />
+                        <SelectValue placeholder="Filter by type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        {availableTypes.map(type => (
+                          <SelectItem key={type} value={type}>
+                            {classificationConfig[type]?.name || type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent>
-              {/* Legend for tech skills */}
-              {nextSkillsFilter === 'tech' && (
-                <div className="flex flex-wrap gap-3 mb-4 text-xs">
-                  <div className="flex items-center gap-1">
-                    <div className="w-3 h-3 rounded-full bg-purple"></div>
-                    <span>🔥 Hot + 📈 Demand (Top Priority)</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-3 h-3 rounded-full bg-cyan"></div>
-                    <span>🔥 Hot Technology</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-3 h-3 rounded-full bg-green"></div>
-                    <span>📈 In Demand</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <div className="w-3 h-3 rounded-full bg-amber"></div>
-                    <span>Standard</span>
-                  </div>
-                </div>
-              )}
+              {/* Legend for correlation badges */}
+              <div className="flex flex-wrap gap-3 mb-4 text-xs">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded-full bg-green"></div>
+                        <span>🚀 Strong Positive</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>Lift {'>'} 1.5 - Always appear together</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded-full bg-cyan"></div>
+                        <span>📈 Moderate Positive</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>Lift 1.1-1.5 - Often appear together</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded-full bg-amber"></div>
+                        <span>⚖️ Neutral</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>Lift 0.9-1.1 - Appear independently</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded-full bg-coral"></div>
+                        <span>📉 Moderate Negative</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>Lift 0.5-0.9 - Rarely appear together</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <div className="flex items-center gap-1">
+                        <div className="w-3 h-3 rounded-full bg-red"></div>
+                        <span>⚠️ Strong Negative</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>Lift {'<'} 0.5 - Almost never appear together</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
 
               {/* Horizontal scrollable container */}
               <div className="relative">
@@ -692,103 +915,130 @@ const SkillDetail = () => {
                     const isSameType = skill.type === skillDetail.basic_info.skill_type;
                     const progressColor = getProgressColor(skill);
                     const valueColor = getValueColor(skill);
+                    const correlationBadge = getCorrelationBadge(skill);
+                    const correlationDesc = getCorrelationDescription(skill);
                     
                     return (
-                      <Link
-                        key={`${skill.id}-${skill.type}-${skill.name}`} // More unique key
-                        to={`/skills/${skill.id}`}
-                        className="flex-none w-[280px] group p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-cyan/30 transition-all"
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan/20 to-purple/20">
-                            {skill.type === 'tech' ? (
-                              <Code className="h-5 w-5 text-cyan" />
-                            ) : (
-                              <Briefcase className="h-5 w-5 text-purple" />
-                            )}
-                          </div>
-                          <Badge
-                            variant="secondary"
-                            className={`text-xs ${getSkillTypeBadgeColor(skill.type, isSameType)}`}
-                          >
-                            {isSameType ? `★ ${skill.type}` : skill.type}
-                          </Badge>
-                        </div>
-                        
-                        <h4 className="mt-3 font-medium group-hover:text-cyan transition-colors line-clamp-2 min-h-[3rem]">
-                          {skill.name}
-                        </h4>
-                        
-                        {/* Co-occurrence rate */}
-                        <div className="mt-2 space-y-2">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Co-occurrence</span>
-                            <span className={`font-medium ${valueColor}`}>
-                              {skill.co_occurrence_rate ? skill.co_occurrence_rate.toFixed(1) : '0'}%
-                            </span>
-                          </div>
-                          <div className="w-full bg-secondary/50 rounded-full h-1.5">
-                            <div 
-                              className={`rounded-full h-1.5 transition-all ${progressColor} group-hover:opacity-80`}
-                              style={{ width: `${Math.min(100, skill.co_occurrence_rate || 0)}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {/* Type-specific metrics */}
-                        {skill.type === 'tech' ? (
-                          // Tech skills show badges
-                          <div className="mt-3 flex flex-wrap gap-1">
-                            {skill.hot_technology && (
-                              <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
-                                🔥 Hot
-                              </Badge>
-                            )}
-                            {skill.in_demand && (
-                              <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
-                                📈 Demand
-                              </Badge>
-                            )}
-                          </div>
-                        ) : skill.type === 'tool' ? (
-                          // Tools show minimal info
-                          <div className="mt-3 text-xs text-muted-foreground">
-                            {skill.usage_count ? (
-                              <span>{skill.usage_count.toLocaleString()} jobs</span>
-                            ) : (
-                              <span>&nbsp;</span>
-                            )}
-                          </div>
-                        ) : (
-                          // Other skills show importance and level
-                          <div className="mt-3 space-y-2">
-                            {skill.avg_importance && skill.avg_importance > 0 && (
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-muted-foreground">Importance</span>
-                                <span className="text-purple font-medium">
-                                  {Math.round(skill.avg_importance)}%
-                                </span>
+                      <TooltipProvider key={`${skill.id}-${skill.type}-${skill.name}`}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Link
+                              to={`/skills/${skill.id}`}
+                              state={{ from: location.pathname }}
+                              className="flex-none w-[280px] group p-4 rounded-xl bg-secondary/30 hover:bg-secondary/50 border border-transparent hover:border-cyan/30 transition-all"
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-cyan/20 to-purple/20">
+                                  {skill.type === 'tech' ? (
+                                    <Code className="h-5 w-5 text-cyan" />
+                                  ) : (
+                                    <Briefcase className="h-5 w-5 text-purple" />
+                                  )}
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                  <Badge
+                                    variant="secondary"
+                                    className={`text-xs ${getSkillTypeBadgeColor(skill.type, isSameType)}`}
+                                  >
+                                    {isSameType ? `★ ${skill.type}` : skill.type}
+                                  </Badge>
+                                  {/* Correlation badge */}
+                                  {skill.lift && skill.lift !== 1.0 && (
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs ${correlationBadge.color} group-hover:opacity-100 transition-opacity`}
+                                    >
+                                      {correlationBadge.icon} {correlationBadge.text}
+                                    </Badge>
+                                  )}
+                                </div>
                               </div>
-                            )}
-                            {skill.avg_level && skill.avg_level > 0 && (
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-muted-foreground">Proficiency</span>
-                                <span className="text-coral font-medium">
-                                  {Math.round(skill.avg_level)}%
-                                </span>
+                              
+                              <h4 className="mt-3 font-medium group-hover:text-cyan transition-colors line-clamp-2 min-h-[3rem]">
+                                {skill.name}
+                              </h4>
+                              
+                              {/* Co-occurrence rate */}
+                              <div className="mt-2 space-y-2">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="text-muted-foreground">Co-occurrence</span>
+                                  <span className={`font-medium ${valueColor}`}>
+                                    {skill.co_occurrence_rate ? skill.co_occurrence_rate.toFixed(1) : '0'}%
+                                  </span>
+                                </div>
+                                <div className="w-full bg-secondary/50 rounded-full h-1.5">
+                                  <div 
+                                    className={`rounded-full h-1.5 transition-all ${progressColor} group-hover:opacity-80`}
+                                    style={{ width: `${Math.min(100, skill.co_occurrence_rate || 0)}%` }}
+                                  />
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        )}
 
-                        {/* Job count */}
-                        {(skill.usage_count || skill.frequency) && (
-                          <div className="mt-3 flex items-center gap-1 text-xs text-muted-foreground border-t border-border/50 pt-2">
-                            <Users className="h-3 w-3" />
-                            <span>{(skill.usage_count || skill.frequency || 0).toLocaleString()} jobs</span>
-                          </div>
-                        )}
-                      </Link>
+                              {/* Type-specific metrics */}
+                              {skill.type === 'tech' ? (
+                                // Tech skills show badges
+                                <div className="mt-3 flex flex-wrap gap-1">
+                                  {skill.hot_technology && (
+                                    <Badge variant="outline" className="text-xs bg-coral/10 text-coral border-coral/20">
+                                      🔥 Hot
+                                    </Badge>
+                                  )}
+                                  {skill.in_demand && (
+                                    <Badge variant="outline" className="text-xs bg-green/10 text-green border-green/20">
+                                      📈 Demand
+                                    </Badge>
+                                  )}
+                                </div>
+                              ) : skill.type === 'tool' ? (
+                                // Tools show minimal info
+                                <div className="mt-3 text-xs text-muted-foreground">
+                                  {skill.usage_count ? (
+                                    <span>{skill.usage_count.toLocaleString()} jobs</span>
+                                  ) : (
+                                    <span>&nbsp;</span>
+                                  )}
+                                </div>
+                              ) : (
+                                // Other skills show importance and level
+                                <div className="mt-3 space-y-2">
+                                  {skill.avg_importance && skill.avg_importance > 0 && (
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="text-muted-foreground">Importance</span>
+                                      <span className="text-purple font-medium">
+                                        {Math.round(skill.avg_importance)}%
+                                      </span>
+                                    </div>
+                                  )}
+                                  {skill.avg_level && skill.avg_level > 0 && (
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="text-muted-foreground">Proficiency</span>
+                                      <span className="text-coral font-medium">
+                                        {Math.round(skill.avg_level)}%
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Job count */}
+                              {(skill.usage_count || skill.frequency) && (
+                                <div className="mt-3 flex items-center gap-1 text-xs text-muted-foreground border-t border-border/50 pt-2">
+                                  <Users className="h-3 w-3" />
+                                  <span>{(skill.usage_count || skill.frequency || 0).toLocaleString()} jobs</span>
+                                </div>
+                              )}
+                            </Link>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-xs">
+                            <p className="text-sm">{correlationDesc}</p>
+                            {skill.chi_square && skill.chi_square > 0 && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                χ² = {skill.chi_square.toFixed(2)} {skill.is_significant ? '(p < 0.05)' : '(p ≥ 0.05)'}
+                              </p>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     );
                   })}
                 </div>
@@ -803,9 +1053,9 @@ const SkillDetail = () => {
                 )}
               </div>
               
-              {/* Count indicator */}
+              {/* Count indicator - updated to show only 2 sort options */}
               <div className="mt-3 text-xs text-muted-foreground text-right border-t border-border/50 pt-2">
-                Showing {filteredNextSkills.length} unique skills • Scroll for more
+                Showing {filteredNextSkills.length} unique skills • Sorted by {nextSkillsSort === 'composite' ? 'recommendation' : 'correlation strength'}
               </div>
             </CardContent>
           </Card>
@@ -846,6 +1096,7 @@ const SkillDetail = () => {
                     <Link
                       key={job.soc_code}
                       to={`/jobs/${job.soc_code.replace('.00', '')}`}
+                      state={{ from: location.pathname }}
                       className="block p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors group"
                     >
                       <div className="space-y-2">
