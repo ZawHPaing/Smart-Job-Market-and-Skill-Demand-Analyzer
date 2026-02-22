@@ -175,11 +175,10 @@ const Jobs = () => {
           .slice(0, 10);
 
         const employmentTopCodes = sortedEmploymentSeries.map((s: any) => s.occ_code);
+        // Keep full title for chart lines - legend will handle truncation
         const employmentLines = sortedEmploymentSeries.map((s: any, index: number) => ({
           key: s.occ_code,
-          name: s.occ_title.length > 20
-            ? s.occ_title.substring(0, 20) + '...'
-            : s.occ_title,
+          name: s.occ_title, // ← Keep full title, let legend handle truncation
           color: pickColor(index),
         }));
         setEmploymentChartLines(employmentLines);
@@ -224,11 +223,10 @@ const Jobs = () => {
           .slice(0, 10);
 
         const salaryTopCodes = sortedSalarySeries.map((s: any) => s.occ_code);
+        // Keep full title for chart lines - legend will handle truncation
         const salaryLines = sortedSalarySeries.map((s: any, index: number) => ({
           key: s.occ_code,
-          name: s.occ_title.length > 20
-            ? s.occ_title.substring(0, 20) + '...'
-            : s.occ_title,
+          name: s.occ_title, // ← Keep full title, let legend handle truncation
           color: pickColor(index),
         }));
         setSalaryChartLines(salaryLines);
@@ -343,12 +341,11 @@ const Jobs = () => {
   }, [filteredJobsNoTop, currentPage]);
 
   // Format top jobs for horizontal bar chart - memoized
+  // Keep full title, let the HorizontalBarChart component handle truncation
   const chartData = useMemo(() => {
     if (!topJobs.length) return [];
     return topJobs.map((job) => ({
-      name: job.occ_title.length > 25 
-        ? job.occ_title.substring(0, 25) + '...' 
-        : job.occ_title,
+      name: job.occ_title, // ← Keep full title, HorizontalBarChart will truncate with hover
       value: job.total_employment,
       secondaryValue: job.a_median || 0,
     }));
@@ -586,7 +583,11 @@ const Jobs = () => {
                         className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
                       >
                         <div className="space-y-1">
-                          <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
+                          {/* Add title attribute for hover tooltip */}
+                          <p 
+                            className="font-medium group-hover:text-cyan transition-colors line-clamp-1 cursor-help"
+                            title={job.occ_title} // Shows full title on hover
+                          >
                             {job.occ_title}
                           </p>
                           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -621,7 +622,11 @@ const Jobs = () => {
                       className="group flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-all duration-200 hover:scale-[1.01]"
                     >
                       <div className="space-y-1">
-                        <p className="font-medium group-hover:text-cyan transition-colors line-clamp-1">
+                        {/* Add title attribute for hover tooltip */}
+                        <p 
+                          className="font-medium group-hover:text-cyan transition-colors line-clamp-1 cursor-help"
+                          title={job.occ_title} // Shows full title on hover
+                        >
                           {job.occ_title}
                         </p>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -98,7 +98,7 @@ class IndustryRepo:
         if (
             self._onet_bls_codes_cache is None
             or force_refresh
-            or (now - self._onet_bls_codes_cache_time) > 300
+            or (now - self._onet_bls_codes_cache_time) > 10800
         ):
             collections = ["skills", "technology_skills", "abilities", "knowledge", "work_activities"]
             tasks = [self.db[c].distinct("onet_soc") for c in collections]

@@ -50,7 +50,7 @@ class JobsRepo:
         current_time = time.time()
         
         # Refresh cache every 5 minutes or if forced
-        if self._onet_cache is None or force_refresh or current_time - self._onet_cache_time > 300:
+        if self._onet_cache is None or force_refresh or current_time - self._onet_cache_time > 10800:
             onet_socs = set()
             
             # Run distinct queries in parallel

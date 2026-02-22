@@ -2,20 +2,22 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 import asyncio
+import time
 from motor.core import AgnosticDatabase
 
 
 class HomeRepo:
     """
     Reads overview metrics from MongoDB collection: bls_oews
-
-    Fields used:
-      - year (int)
-      - tot_emp (string/int)  e.g. "131,765,830"
-      - naics (string)
-      - occ_code (string)
-      - a_median (string/int) e.g. "48520"
     """
+    
+    # Add cache for expensive operations
+    _overview_cache: Dict[int, Dict[str, Any]] = {}
+    _overview_cache_time: Dict[int, float] = {}
+    _market_ticker_cache: Dict[int, Dict[str, Any]] = {}
+    _market_ticker_cache_time: Dict[int, float] = {}
+    _total_employment_cache: Dict[int, float] = {}
+    _total_employment_cache_time: Dict[int, float] = {}
 
     def __init__(self, db: AgnosticDatabase):
         self.db = db
@@ -72,6 +74,15 @@ class HomeRepo:
         }
 
     async def _total_employment(self, year: int) -> float:
+        """Get total employment with 3-hour cache"""
+        now = time.time()
+        
+        # Check cache
+        if year in self._total_employment_cache:
+            if now - self._total_employment_cache_time.get(year, 0) < 10800:  # 3 hours
+                print(f"✅ Total employment cache HIT for {year}")
+                return self._total_employment_cache[year]
+        
         pipeline = [
             {"$match": {"year": year}},
             self._add_numeric_fields_stage(),
@@ -79,7 +90,13 @@ class HomeRepo:
             {"$project": {"_id": 0, "total": 1}},
         ]
         r = await self.col.aggregate(pipeline).to_list(length=1)
-        return float(r[0]["total"]) if r else 0.0
+        result = float(r[0]["total"]) if r else 0.0
+        
+        # Update cache
+        self._total_employment_cache[year] = result
+        self._total_employment_cache_time[year] = now
+        
+        return result
 
     async def latest_year(self) -> int:
         doc = await self.col.find_one(sort=[("year", -1)], projection={"year": 1})
@@ -92,6 +109,7 @@ class HomeRepo:
         return count > 0
 
     async def _median_salary(self, year: int) -> float:
+        # This is a simple find_one, might not need caching
         doc = await self.col.find_one(
             {
                 "year": year,
@@ -104,6 +122,15 @@ class HomeRepo:
         return self._to_float(doc.get("a_median")) if doc else 0.0
 
     async def _top_growing_industry(self, year: int) -> Optional[Dict[str, Any]]:
+        """Top growing industry with 3-hour cache"""
+        now = time.time()
+        
+        # Check cache
+        if year in self._market_ticker_cache and "top_growing_industry" in self._market_ticker_cache[year]:
+            if now - self._market_ticker_cache_time.get(year, 0) < 10800:
+                print(f"✅ Top growing industry cache HIT for {year}")
+                return self._market_ticker_cache[year].get("top_growing_industry")
+        
         if year <= 0:
             return None
         match_stage = {
@@ -193,6 +220,7 @@ class HomeRepo:
         return r[0] if r else None
 
     async def _top_growing_occupation(self, year: int) -> Optional[Dict[str, Any]]:
+        """Top growing occupation with 3-hour cache"""
         if year <= 0:
             return None
         pipeline = [
@@ -335,10 +363,20 @@ class HomeRepo:
         return int(await tech_col.count_documents({"hot_technology": True}))
 
     async def market_ticker(self, year: Optional[int] = None) -> Dict[str, Any]:
+        """Market ticker with 3-hour cache"""
+        now = time.time()
+        
         if year is not None and await self._year_has_data(year):
             y = year
         else:
             y = await self.latest_year()
+        
+        # Check cache
+        if y in self._market_ticker_cache:
+            if now - self._market_ticker_cache_time.get(y, 0) < 10800:  # 3 hours
+                print(f"✅ Market ticker cache HIT for {y}")
+                return self._market_ticker_cache[y]
+        
         (
             med_salary,
             prev_salary,
@@ -359,7 +397,7 @@ class HomeRepo:
 
         sal_trend = 0.0 if prev_salary <= 0 else ((med_salary - prev_salary) / prev_salary) * 100.0
 
-        return {
+        result = {
             "year": y,
             "median_salary": med_salary,
             "salary_trend_pct": sal_trend,
@@ -369,19 +407,25 @@ class HomeRepo:
             "top_tech_skill": top_tech_skill,
             "hot_tech_count": hot_tech_count,
         }
+        
+        # Update cache
+        self._market_ticker_cache[y] = result
+        self._market_ticker_cache_time[y] = now
+        
+        return result
 
     async def overview(self, year: int) -> Dict[str, Any]:
         """
-        Returns:
-          {
-            year,
-            total_employment,
-            unique_industries,
-            unique_job_titles,
-            industry_trend_pct,
-            median_annual_salary
-          }
+        Returns overview metrics with 3-hour cache.
         """
+        now = time.time()
+        
+        # Check cache
+        if year in self._overview_cache:
+            if now - self._overview_cache_time.get(year, 0) < 10800:  # 3 hours
+                print(f"✅ Overview cache HIT for {year}")
+                return self._overview_cache[year]
+        
         add_nums = self._add_numeric_fields_stage()
 
         pipeline = [
@@ -426,7 +470,7 @@ class HomeRepo:
         if prev_total > 0:
             trend_pct = ((total_employment - prev_total) / prev_total) * 100.0
 
-        return {
+        result = {
             "year": year,
             "total_employment": total_employment,
             "unique_industries": unique_industries,
@@ -434,3 +478,9 @@ class HomeRepo:
             "industry_trend_pct": trend_pct,
             "median_annual_salary": median_annual_salary,
         }
+        
+        # Update cache
+        self._overview_cache[year] = result
+        self._overview_cache_time[year] = now
+        
+        return result

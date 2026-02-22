@@ -30,15 +30,15 @@ export function TopNavigation() {
   const searchRef = useRef<HTMLDivElement>(null);
   
   const {
-    query,
-    setQuery,
-    results,
-    loading,
-    isOpen,
-    setIsOpen,
-    handleSelect,
-    clearSearch
-  } = useSearch();
+  query,
+  setQuery,
+  results,
+  loading,
+  isOpen,
+  setIsOpen,
+  handleSelect,
+  clearSearch
+} = useSearch({ year: selectedYear }); // Pass the selected year
 
   // Close search results when clicking outside
   useEffect(() => {

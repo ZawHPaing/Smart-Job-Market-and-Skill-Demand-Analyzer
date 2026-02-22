@@ -8,7 +8,7 @@ class SimpleCache:
     def __init__(self):
         self.cache: Dict[str, Any] = {}
         self.cache_times: Dict[str, datetime] = {}
-        self.ttl = timedelta(hours=1)  # Cache lasts 1 hour
+        self.ttl = timedelta(hours=3)  # Cache lasts 2 hours
         
     def _generate_key(self, *args, **kwargs) -> str:
         """Generate a cache key from arguments"""

@@ -404,8 +404,14 @@ export default function Home() {
               />
             </CardHeader>
             <CardContent className="min-h-[500px]">
-              {donutData.length === 0 ? (
-                <div className="text-muted-foreground">No industry data available</div>
+              {loading ? (
+                <div className="flex items-center justify-center h-[450px] text-muted-foreground">
+                  Loading industry distribution data...
+                </div>
+              ) : donutData.length === 0 ? (
+                <div className="flex items-center justify-center h-[450px] text-muted-foreground">
+                  No industry data available
+                </div>
               ) : (
                 <DonutChart 
                   data={donutData} 
@@ -427,8 +433,14 @@ export default function Home() {
               />
             </CardHeader>
             <CardContent className="min-h-[500px]">
-              {topJobChartData.length === 0 ? (
-                <div className="text-muted-foreground">No job data available</div>
+              {loading ? (
+                <div className="flex items-center justify-center h-[450px] text-muted-foreground">
+                  Loading job titles data...
+                </div>
+              ) : topJobChartData.length === 0 ? (
+                <div className="flex items-center justify-center h-[450px] text-muted-foreground">
+                  No job data available
+                </div>
               ) : (
                 <HorizontalBarChart
                   data={topJobChartData}
@@ -450,8 +462,14 @@ export default function Home() {
             />
           </CardHeader>
           <CardContent>
-            {trend.data.length === 0 || trend.lines.length === 0 ? (
-              <div className="text-muted-foreground">No trend data available</div>
+            {loading ? (
+              <div className="flex items-center justify-center h-[400px] text-muted-foreground">
+                Loading trend data...
+              </div>
+            ) : trend.data.length === 0 || trend.lines.length === 0 ? (
+              <div className="flex items-center justify-center h-[400px] text-muted-foreground">
+                No trend data available
+              </div>
             ) : (
               <>
                 <div className="mb-2 text-xs text-muted-foreground text-center">

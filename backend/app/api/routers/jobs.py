@@ -134,9 +134,16 @@ async def job_groups(
     repo = JobsRepo(db)
     groups = await repo.job_groups(year)
     
+    # Filter out None or empty string groups and ensure they're strings
+    valid_groups = []
+    for g in groups:
+        group_value = g.get("group")
+        if group_value and isinstance(group_value, str) and group_value.strip():
+            valid_groups.append(JobGroupItem(group=group_value))
+    
     response = JobGroupsResponse(
         year=year,
-        groups=[JobGroupItem(**g) for g in groups]
+        groups=valid_groups
     )
     
     cache.set(cache_key, response.dict())

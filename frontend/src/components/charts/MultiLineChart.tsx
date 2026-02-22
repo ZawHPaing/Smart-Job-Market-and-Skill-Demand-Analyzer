@@ -19,8 +19,6 @@ interface MultiLineChartProps {
   xAxisKey: string;
   height?: number;
   formatYAxis?: (value: number) => string;
-
-  // ✅ optional override, default 6
   maxLines?: number;
 }
 
@@ -50,6 +48,31 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
+// Custom legend component with truncation and hover tooltips
+const CustomLegend = ({ payload }: any) => {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
+      {payload.map((entry: any, index: number) => (
+        <div
+          key={`legend-${index}`}
+          className="flex items-center gap-2 group"
+        >
+          <div
+            className="w-3 h-3 rounded-full"
+            style={{ backgroundColor: entry.color }}
+          />
+          <span
+            className="text-sm text-muted-foreground max-w-[150px] truncate cursor-help"
+            title={entry.value} // Shows full name on hover
+          >
+            {entry.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export function MultiLineChart({
   data,
   lines,
@@ -59,7 +82,7 @@ export function MultiLineChart({
     v >= 1_000_000 ? `${v / 1_000_000}M` : v >= 1_000 ? `${v / 1_000}K` : v.toString(),
   maxLines = 6,
 }: MultiLineChartProps) {
-  // ✅ Deduplicate & hard-limit to maxLines
+  // Deduplicate & hard-limit to maxLines
   const limitedLines = (() => {
     const seen = new Set<string>();
     const out: typeof lines = [];
@@ -75,7 +98,7 @@ export function MultiLineChart({
     return out;
   })();
 
-  // ✅ Optionally, remove extra keys from data (prevents stale keys showing in tooltip/legend)
+  // Optionally, remove extra keys from data (prevents stale keys showing in tooltip/legend)
   const limitedData = (data || []).map((row) => {
     const cleaned: Record<string, any> = { ...row };
     for (const k of Object.keys(cleaned)) {
@@ -104,12 +127,9 @@ export function MultiLineChart({
           tickFormatter={formatYAxis}
         />
         <Tooltip content={<CustomTooltip />} />
-        <Legend
-          verticalAlign="bottom"
-          iconType="circle"
-          iconSize={8}
-          formatter={(value) => <span className="text-sm text-muted-foreground">{value}</span>}
-        />
+        
+        {/* Replace default Legend with custom one that has truncation + hover */}
+        <Legend content={<CustomLegend />} />
 
         {limitedLines.map((line) => (
           <Line

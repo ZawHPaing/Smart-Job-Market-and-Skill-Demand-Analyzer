@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from collections import defaultdict
 import asyncio
+import time
 
 if TYPE_CHECKING:
     from motor.core import AgnosticDatabase
@@ -51,7 +52,7 @@ def _get_education_description(category: int) -> str:
 
 class JobDetailRepo:
     """
-    Repository for job details using O*NET collections:
+    Repository for job details using O*NET collections with 3-hour caching.
     - abilities
     - education_training_experience
     - knowledge
@@ -61,20 +62,44 @@ class JobDetailRepo:
     - work_activities
     
     Uses optimized MAX aggregation to match JobsRepo methodology.
+    All caches last 3 hours (10800 seconds).
     """
+    
+    # Add caches
+    _job_detail_cache: Dict[str, Dict[str, Any]] = {}
+    _job_detail_cache_time: Dict[str, float] = {}
+    _job_growth_cache: Dict[str, float] = {}
+    _job_growth_cache_time: Dict[str, float] = {}
+    _job_salary_cache: Dict[str, float] = {}
+    _job_salary_cache_time: Dict[str, float] = {}
+    _top_industry_cache: Dict[str, Dict[str, Any]] = {}
+    _top_industry_cache_time: Dict[str, float] = {}
+    _onet_soc_cache: Dict[str, Optional[str]] = {}
+    _onet_soc_cache_time: Dict[str, float] = {}
+    _experience_cache: Dict[str, str] = {}
+    _experience_cache_time: Dict[str, float] = {}
     
     def __init__(self, db: "AgnosticDatabase"):
         self.db = db
     
     # -------------------------
-    # OPTIMIZED BLS DATA METHODS - MATCHING JOBSREPO
+    # OPTIMIZED BLS DATA METHODS - WITH CACHING
     # -------------------------
     
     async def get_job_by_occ_code(self, occ_code: str, year: int) -> Optional[Dict[str, Any]]:
         """
-        Get basic job info using MAX tot_emp approach - matches JobsRepo.top_jobs()
+        Get basic job info using MAX tot_emp approach - with 3-hour cache.
         Year is required to match specific year data.
         """
+        cache_key = f"job_{occ_code}_{year}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._job_detail_cache:
+            if now - self._job_detail_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ Job detail cache HIT for {occ_code} {year}")
+                return self._job_detail_cache[cache_key]
+        
         pipeline = [
             {
                 "$match": {
@@ -126,20 +151,35 @@ class JobDetailRepo:
         
         if result:
             doc = result[0]
-            return {
+            job_data = {
                 "occ_code": occ_code,
                 "occ_title": str(doc.get("occ_title", "")),
                 "tot_emp": _to_float(doc.get("tot_emp", 0)),
                 "a_median": _to_float(doc.get("a_median", 0)),
                 "group": doc.get("group")
             }
+            
+            # Update cache
+            self._job_detail_cache[cache_key] = job_data
+            self._job_detail_cache_time[cache_key] = now
+            
+            return job_data
         return None
     
     async def get_job_growth_trend(self, occ_code: str) -> float:
         """
-        Calculate job growth percentage - optimized single aggregation
+        Calculate job growth percentage - with 3-hour cache.
         Matches JobsRepo.get_job_market_trend methodology
         """
+        cache_key = f"growth_{occ_code}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._job_growth_cache:
+            if now - self._job_growth_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ Job growth cache HIT for {occ_code}")
+                return self._job_growth_cache[cache_key]
+        
         pipeline = [
             {
                 "$match": {
@@ -175,13 +215,28 @@ class JobDetailRepo:
             return 0.0
         
         growth_pct = ((current_emp - prev_emp) / prev_emp) * 100
-        return round(growth_pct, 1)
+        result = round(growth_pct, 1)
+        
+        # Update cache
+        self._job_growth_cache[cache_key] = result
+        self._job_growth_cache_time[cache_key] = now
+        
+        return result
     
     async def get_job_salary_trend(self, occ_code: str) -> float:
         """
-        Calculate salary growth percentage - optimized single aggregation
+        Calculate salary growth percentage - with 3-hour cache.
         Takes salary from document with MAX tot_emp for each year
         """
+        cache_key = f"salary_{occ_code}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._job_salary_cache:
+            if now - self._job_salary_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ Job salary cache HIT for {occ_code}")
+                return self._job_salary_cache[cache_key]
+        
         pipeline = [
             {
                 "$match": {
@@ -219,7 +274,13 @@ class JobDetailRepo:
             return 0.0
         
         growth_pct = ((current_salary - prev_salary) / prev_salary) * 100
-        return round(growth_pct, 1)
+        result = round(growth_pct, 1)
+        
+        # Update cache
+        self._job_salary_cache[cache_key] = result
+        self._job_salary_cache_time[cache_key] = now
+        
+        return result
     
     async def get_top_industry(self, occ_code: str, year: int) -> Optional[Dict[str, Any]]:
         """
@@ -228,7 +289,17 @@ class JobDetailRepo:
         then selects the industry with highest employment excluding:
         - "Cross-industry" (naics 000000)
         - "Cross-industry, private ownership only" (naics 000001)
+        With 3-hour cache.
         """
+        cache_key = f"top_ind_{occ_code}_{year}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._top_industry_cache:
+            if now - self._top_industry_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ Top industry cache HIT for {occ_code} {year}")
+                return self._top_industry_cache[cache_key]
+        
         pipeline = [
             {
                 "$match": {
@@ -285,11 +356,17 @@ class JobDetailRepo:
         
         if result:
             doc = result[0]
-            return {
+            industry_data = {
                 "naics": doc.get("naics", ""),
                 "naics_title": str(doc.get("naics_title", "")),
                 "tot_emp": _to_float(doc.get("tot_emp", 0))
             }
+            
+            # Update cache
+            self._top_industry_cache[cache_key] = industry_data
+            self._top_industry_cache_time[cache_key] = now
+            
+            return industry_data
         return None
     
     # -------------------------
@@ -297,7 +374,16 @@ class JobDetailRepo:
     # -------------------------
     
     async def get_experience_required(self, onet_soc: str) -> str:
-        """Get experience required from education/training data"""
+        """Get experience required from education/training data - with 3-hour cache."""
+        cache_key = f"exp_{onet_soc}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._experience_cache:
+            if now - self._experience_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ Experience cache HIT for {onet_soc}")
+                return self._experience_cache[cache_key]
+        
         doc = await self.db["education_training_experience"].find_one(
             {
                 "onet_soc": onet_soc,
@@ -309,43 +395,72 @@ class JobDetailRepo:
         if doc:
             value = _to_float(doc.get("data_value", 0))
             if value >= 8:
-                return "10+ years"
+                result = "10+ years"
             elif value >= 7:
-                return "8-10 years"
+                result = "8-10 years"
             elif value >= 6:
-                return "6-8 years"
+                result = "6-8 years"
             elif value >= 5:
-                return "4-6 years"
+                result = "4-6 years"
             elif value >= 4:
-                return "2-4 years"
+                result = "2-4 years"
             elif value >= 3:
-                return "1-2 years"
+                result = "1-2 years"
             elif value >= 2:
-                return "6 months - 1 year"
+                result = "6 months - 1 year"
             elif value >= 1:
-                return "Less than 6 months"
+                result = "Less than 6 months"
             else:
-                return "None"
+                result = "None"
+        else:
+            result = "Not specified"
         
-        return "Not specified"
+        # Update cache
+        self._experience_cache[cache_key] = result
+        self._experience_cache_time[cache_key] = now
+        
+        return result
     
     async def get_onet_soc(self, occ_code: str) -> Optional[str]:
-        """Map BLS OCC code to O*NET SOC code format"""
+        """Map BLS OCC code to O*NET SOC code format - with 3-hour cache."""
+        cache_key = f"onet_{occ_code}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._onet_soc_cache:
+            if now - self._onet_soc_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ ONET SOC cache HIT for {occ_code}")
+                return self._onet_soc_cache[cache_key]
+        
         if not occ_code:
-            return None
+            result = None
+        else:
+            occ_code = occ_code.strip()
+            
+            if ".00" in occ_code:
+                result = occ_code
+            elif "-" in occ_code and len(occ_code) >= 6:
+                result = f"{occ_code}.00"
+            else:
+                result = None
         
-        occ_code = occ_code.strip()
+        # Update cache
+        self._onet_soc_cache[cache_key] = result
+        self._onet_soc_cache_time[cache_key] = now
         
-        if ".00" in occ_code:
-            return occ_code
-        
-        if "-" in occ_code and len(occ_code) >= 6:
-            return f"{occ_code}.00"
-        
-        return None
+        return result
     
     async def find_onet_soc_by_title(self, title: str) -> Optional[str]:
-        """Find O*NET SOC code by job title"""
+        """Find O*NET SOC code by job title - with 3-hour cache."""
+        cache_key = f"onet_title_{title}"
+        now = time.time()
+        
+        # Check cache
+        if cache_key in self._onet_soc_cache:
+            if now - self._onet_soc_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ ONET title cache HIT for {title[:30]}...")
+                return self._onet_soc_cache[cache_key]
+        
         if not title:
             return None
         
@@ -354,7 +469,11 @@ class JobDetailRepo:
             {"onet_soc": 1}
         )
         if doc:
-            return doc.get("onet_soc")
+            result = doc.get("onet_soc")
+            # Update cache
+            self._onet_soc_cache[cache_key] = result
+            self._onet_soc_cache_time[cache_key] = now
+            return result
         
         for collection in ["abilities", "knowledge", "work_activities"]:
             doc = await self.db[collection].find_one(
@@ -362,7 +481,11 @@ class JobDetailRepo:
                 {"onet_soc": 1}
             )
             if doc:
-                return doc.get("onet_soc")
+                result = doc.get("onet_soc")
+                # Update cache
+                self._onet_soc_cache[cache_key] = result
+                self._onet_soc_cache_time[cache_key] = now
+                return result
         
         return None
     
@@ -568,7 +691,16 @@ class JobDetailRepo:
     # -------------------------
     
     async def get_complete_job_detail(self, occ_code: str, year: int = 2024) -> Dict[str, Any]:
-        """Get complete job details - optimized with parallel fetching"""
+        """Get complete job details - optimized with parallel fetching and 3-hour cache."""
+        
+        cache_key = f"complete_{occ_code}_{year}"
+        now = time.time()
+        
+        # Check cache for complete result
+        if cache_key in self._job_detail_cache:
+            if now - self._job_detail_cache_time.get(cache_key, 0) < 10800:  # 3 hours
+                print(f"✅ Complete job detail cache HIT for {occ_code} {year}")
+                return self._job_detail_cache[cache_key]
         
         # Get basic job info using optimized method (matches JobsRepo)
         basic_info = await self.get_job_by_occ_code(occ_code, year)
@@ -663,7 +795,6 @@ class JobDetailRepo:
         soft_skills_list.sort(key=lambda x: x["value"], reverse=True)
         
         # Generate metrics
-        # Generate metrics
         metrics = []
         if basic_info:
             total_employment = _to_float(basic_info.get("tot_emp", 0))
@@ -717,5 +848,9 @@ class JobDetailRepo:
             "work_activities": activities,  # ← ALL work activities, already sorted by value
             "industry": industry  # Add industry to the result
         })
+        
+        # Update cache with complete result
+        self._job_detail_cache[cache_key] = result
+        self._job_detail_cache_time[cache_key] = now
         
         return result

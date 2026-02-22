@@ -48,7 +48,10 @@ function RankedLineBars({
         return (
           <div key={`${item.name}-${index}`} className="group">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium truncate max-w-[240px]" title={item.name}>
+              <span 
+                className="text-sm font-medium truncate max-w-[240px] cursor-help" 
+                title={item.name} // Show full name on hover
+              >
                 {item.name}
               </span>
               <span className="text-cyan font-medium text-sm">{fmtPercent(item.value)}</span>
@@ -93,8 +96,6 @@ const JobDetail = () => {
       setLoading(true);
       setError(null);
 
-      console.log('🟡 Loading job detail for:', occ_code);
-
       try {
         const yearFrom = 2011;
         const [data, summary] = await Promise.all([
@@ -109,7 +110,7 @@ const JobDetail = () => {
         setChartLines([
           {
             key: lineKey,
-            name: title.length > 30 ? title.substring(0, 30) + '...' : title,
+            name: title, // Keep full title, let legend handle truncation
             color: 'hsl(186 100% 50%)',
           },
         ]);
@@ -129,18 +130,8 @@ const JobDetail = () => {
           setEmploymentTrendData([]);
           setSalaryTrendData([]);
         }
-
-        console.log('🟢 Job detail loaded:', data);
-        console.log('🟢 Skills count:', data.skills?.length);
-        console.log('🟢 Tech skills count:', data.tech_skills?.length);
-        console.log('🟢 Soft skills count:', data.soft_skills?.length);
-        console.log('🟢 Activities count:', data.activities?.length);
-        console.log('🟢 Abilities count:', data.abilities?.length);
-        console.log('🟢 Knowledge count:', data.knowledge?.length);
-        console.log('🟢 Tools count:', data.tools?.length);
       } catch (e: any) {
         if (cancelled) return;
-        console.error('🔴 Job detail error:', e);
         setError(e?.message || 'Failed to load job details');
       } finally {
         if (cancelled) return;
@@ -195,13 +186,13 @@ const JobDetail = () => {
     }).filter(metric => metric.title !== "Experience Required"); // Filter out Experience Required
   }, [jobDetail]);
 
-  // Format skills for chart - show all skills but limit display to prevent overcrowding
+  // Format skills for chart - keep full names for hover
   const jobSkills = useMemo(() => {
     if (!jobDetail?.skills) return [];
     return jobDetail.skills
       .filter((skill) => String(skill?.name || "").trim().length > 0)
       .map((skill) => ({
-        name: skill.name.length > 30 ? skill.name.substring(0, 30) + "..." : skill.name,
+        name: skill.name, // Keep full name, RankedLineBars will truncate with hover
         value: Math.round(skill.value),
         type: skill.type,
       }));
@@ -219,7 +210,7 @@ const JobDetail = () => {
     return jobDetail.activities
       .filter((activity) => String(activity?.name || "").trim().length > 0)
       .map((activity) => ({
-        name: activity.name.length > 30 ? activity.name.substring(0, 30) + "..." : activity.name,
+        name: activity.name, // Keep full name, RankedLineBars will truncate with hover
         value: Math.round(activity.value),
       }));
   }, [jobDetail]);
@@ -460,8 +451,11 @@ const JobDetail = () => {
                           }`}>
                             <div className="flex items-center justify-between mb-1">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-medium text-sm group-hover:text-cyan transition-colors">
-                                  {skill.name}
+                                <span 
+                                  className="font-medium text-sm group-hover:text-cyan transition-colors cursor-help"
+                                  title={skill.name} // Show full name on hover
+                                >
+                                  {skill.name.length > 30 ? skill.name.substring(0, 30) + '...' : skill.name}
                                 </span>
                                 {skill.hot_technology && (
                                   <Badge variant="outline" className="text-xs bg-cyan/10 text-cyan border-cyan/20">
@@ -479,7 +473,10 @@ const JobDetail = () => {
                               </span>
                             </div>
                             {skill.commodity_title && (
-                              <p className="text-xs text-muted-foreground mb-2">
+                              <p 
+                                className="text-xs text-muted-foreground mb-2 truncate cursor-help"
+                                title={skill.commodity_title}
+                              >
                                 {skill.commodity_title}
                               </p>
                             )}
@@ -523,7 +520,10 @@ const JobDetail = () => {
                             >
                               <div className="p-2 rounded-lg bg-secondary/20 hover:bg-secondary/30 transition-colors">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-sm group-hover:text-cyan transition-colors">
+                                  <span 
+                                    className="text-sm group-hover:text-cyan transition-colors cursor-help truncate max-w-[200px]"
+                                    title={skill.name}
+                                  >
                                     {skill.name}
                                   </span>
                                   <span className="text-xs text-muted-foreground">
@@ -615,8 +615,11 @@ const JobDetail = () => {
                             state={{ from: location.pathname }}
                             className="p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors block group"
                           >
-                            <p className="font-medium text-sm group-hover:text-cyan transition-colors">
-                              {ability.name}
+                            <p 
+                              className="font-medium text-sm group-hover:text-cyan transition-colors cursor-help"
+                              title={ability.name}
+                            >
+                              {ability.name.length > 30 ? ability.name.substring(0, 30) + '...' : ability.name}
                             </p>
                             <p className="text-xs text-muted-foreground">{ability.category}</p>
                             <div className="mt-1 w-full bg-secondary/50 rounded-full h-1">
@@ -660,7 +663,12 @@ const JobDetail = () => {
                           state={{ from: location.pathname }}
                           className="flex items-center justify-between p-2 rounded bg-secondary/20 hover:bg-secondary/30 transition-colors group"
                         >
-                          <span className="text-sm group-hover:text-cyan transition-colors">{k.name}</span>
+                          <span 
+                            className="text-sm group-hover:text-cyan transition-colors cursor-help truncate max-w-[200px]"
+                            title={k.name}
+                          >
+                            {k.name}
+                          </span>
                           <Badge variant="outline" className="text-xs">
                             {k.level}
                           </Badge>
@@ -704,10 +712,17 @@ const JobDetail = () => {
                         variant="outline"
                         className="px-3 py-2 text-sm bg-secondary/20 hover:bg-secondary/30 cursor-pointer transition-colors"
                       >
-                        {tool.name}
+                        <span className="cursor-help" title={tool.name}>
+                          {tool.name}
+                        </span>
                         {tool.commodity_title && (
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            {tool.commodity_title}
+                          <span 
+                            className="ml-2 text-xs text-muted-foreground cursor-help"
+                            title={tool.commodity_title}
+                          >
+                            {tool.commodity_title.length > 30 
+                              ? tool.commodity_title.substring(0, 30) + '...' 
+                              : tool.commodity_title}
                           </span>
                         )}
                       </Badge>
@@ -717,30 +732,6 @@ const JobDetail = () => {
               </div>
               <div className="text-xs text-muted-foreground mt-2 text-right border-t border-border/50 pt-2">
                 Showing all {jobDetail.tools.length} tools
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Debug Info - Only in development */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="glass-card border-amber/30">
-            <CardHeader>
-              <SectionHeader title="Debug Info" subtitle="Remove in production" />
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1 text-xs max-h-[300px] overflow-y-auto">
-                <p><span className="font-bold">Job Code:</span> {jobDetail.occ_code}</p>
-                <p><span className="font-bold">Job Title:</span> {jobDetail.occ_title}</p>
-                <p><span className="font-bold">SOC Code:</span> {jobDetail.basic_info.soc_code || 'N/A'}</p>
-                <p><span className="font-bold">Skills Count:</span> {jobDetail.skills.length}</p>
-                <p><span className="font-bold">Tech Skills Count:</span> {jobDetail.tech_skills.length}</p>
-                <p><span className="font-bold">Soft Skills Count:</span> {jobDetail.soft_skills.length}</p>
-                <p><span className="font-bold">Activities Count:</span> {jobDetail.activities.length}</p>
-                <p><span className="font-bold">Abilities Count:</span> {jobDetail.abilities.length}</p>
-                <p><span className="font-bold">Knowledge Count:</span> {jobDetail.knowledge.length}</p>
-                <p><span className="font-bold">Tools Count:</span> {jobDetail.tools.length}</p>
-                <p><span className="font-bold">Has Education:</span> {jobDetail.education ? 'Yes' : 'No'}</p>
               </div>
             </CardContent>
           </Card>

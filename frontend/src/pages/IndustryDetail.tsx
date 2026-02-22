@@ -228,24 +228,6 @@ const IndustryDetail = () => {
             )}
           </CardContent>
         </Card>
-
-        {/* Job Detail Routes Info - Helpful for debugging */}
-        {process.env.NODE_ENV === 'development' && (
-          <Card className="glass-card border-amber/30">
-            <CardHeader>
-              <SectionHeader title="Debug Info" subtitle="Job Detail Routes" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs mb-2">Clicking any job above will navigate to:</p>
-              <code className="text-xs block p-2 bg-secondary/30 rounded">
-                /jobs/[occ_code]
-              </code>
-              <p className="text-xs mt-2 text-muted-foreground">
-                Example: Software Developers → /jobs/15-1252
-              </p>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </DashboardLayout>
   );

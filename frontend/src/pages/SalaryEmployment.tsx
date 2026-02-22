@@ -86,8 +86,6 @@ function buildMultiLineRows(series: { key: string; points: { year: number; value
   return Array.from(yearMap.values()).sort((a, b) => (a.year as number) - (b.year as number));
 }
 
-// In SalaryEmployment.tsx, update the normalizeEmploymentTrendMetric function
-
 function normalizeEmploymentTrendMetric(items: MetricItem[]): MetricItem[] {
   return (items || []).map((m) => {
     if (m.title === "Employment Trend") {
@@ -123,6 +121,11 @@ export default function SalaryEmployment() {
   const [tab, setTab] = useState<"industries" | "jobs">("industries");
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Add loading states for specific components
+  const [industryBarLoading, setIndustryBarLoading] = useState(false);
+  const [industryTimeSeriesLoading, setIndustryTimeSeriesLoading] = useState(false);
+  const [jobTimeSeriesLoading, setJobTimeSeriesLoading] = useState(false);
 
   const [metrics, setMetrics] = useState<MetricItem[]>([]);
 
@@ -201,22 +204,31 @@ export default function SalaryEmployment() {
       return;
     }
 
-    const ts = await getIndustrySalaryTimeSeries({ names });
-    const order = new Map(names.map((n, i) => [n.toLowerCase(), i]));
-    const ordered = (ts.series || [])
-      .filter((s) => order.has((s.name || "").toLowerCase()))
-      .sort(
-        (a, b) =>
-          (order.get((a.name || "").toLowerCase()) ?? 999) -
-          (order.get((b.name || "").toLowerCase()) ?? 999)
-      )
-      .slice(0, TOP_N);
+    setIndustryTimeSeriesLoading(true);
+    try {
+      const ts = await getIndustrySalaryTimeSeries({ names });
+      const order = new Map(names.map((n, i) => [n.toLowerCase(), i]));
+      const ordered = (ts.series || [])
+        .filter((s) => order.has((s.name || "").toLowerCase()))
+        .sort(
+          (a, b) =>
+            (order.get((a.name || "").toLowerCase()) ?? 999) -
+            (order.get((b.name || "").toLowerCase()) ?? 999)
+        )
+        .slice(0, TOP_N);
 
-    setIndustrySeries(ordered);
+      setIndustrySeries(ordered);
+    } catch (e) {
+      console.error("Failed to load industry time series:", e);
+      setIndustrySeries([]);
+    } finally {
+      setIndustryTimeSeriesLoading(false);
+    }
   }
 
   async function loadIndustries() {
     setLoading(true);
+    setIndustryBarLoading(true);
     try {
       const [m, bar, table] = await Promise.all([
         getSalaryEmploymentMetrics(year),
@@ -233,18 +245,15 @@ export default function SalaryEmployment() {
 
       setMetrics(normalizeEmploymentTrendMetric(m.metrics));
       setIndustryBar(bar.items);
+      setIndustryBarLoading(false);
       setIndustriesTable(dedupeIndustriesByName(table.items || []));
       setIndustriesTotal(table.total);
 
       const names = pickTopUniqueNames(bar.items, TOP_N);
-      try {
-        await loadIndustryTimeSeriesFromTop6Names(names);
-      } catch (e) {
-        console.error("Failed to load industry time series:", e);
-        setIndustrySeries([]);
-      }
+      await loadIndustryTimeSeriesFromTop6Names(names);
     } catch (e) {
       console.error("Failed to load industries tab:", e);
+      setIndustryBarLoading(false);
     } finally {
       setLoading(false);
     }
@@ -252,6 +261,7 @@ export default function SalaryEmployment() {
 
   async function loadJobs() {
     setLoading(true);
+    setJobTimeSeriesLoading(true);
     try {
       const [m, table] = await Promise.all([
         getSalaryEmploymentMetrics(year),
@@ -278,6 +288,7 @@ export default function SalaryEmployment() {
     } catch (e) {
       console.error("Failed to load jobs tab:", e);
     } finally {
+      setJobTimeSeriesLoading(false);
       setLoading(false);
     }
   }
@@ -395,13 +406,19 @@ export default function SalaryEmployment() {
                   />
                 </CardHeader>
                 <CardContent>
-                  <HorizontalBarChart
-                    data={industryDataForBar}
-                    showSecondary
-                    primaryLabel="Employment"
-                    secondaryLabel="Median Salary"
-                    formatValue={(v) => fmtK(v)}
-                  />
+                  {industryBarLoading ? (
+                    <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                      Loading industry data...
+                    </div>
+                  ) : (
+                    <HorizontalBarChart
+                      data={industryDataForBar}
+                      showSecondary
+                      primaryLabel="Employment"
+                      secondaryLabel="Median Salary"
+                      formatValue={(v) => fmtK(v)}
+                    />
+                  )}
                 </CardContent>
               </Card>
 
@@ -413,14 +430,24 @@ export default function SalaryEmployment() {
                   />
                 </CardHeader>
                 <CardContent>
-                  <MultiLineChart
-                    data={industryMultiLineData}
-                    xAxisKey="year"
-                    lines={industryLines}
-                    height={350}
-                    formatYAxis={(v) => `$${Math.round(v / 1000)}K`}
-                    maxLines={TOP_N}
-                  />
+                  {industryTimeSeriesLoading ? (
+                    <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                      Loading salary distribution data...
+                    </div>
+                  ) : industryMultiLineData.length === 0 || industryLines.length === 0 ? (
+                    <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                      No salary distribution data available
+                    </div>
+                  ) : (
+                    <MultiLineChart
+                      data={industryMultiLineData}
+                      xAxisKey="year"
+                      lines={industryLines}
+                      height={350}
+                      formatYAxis={(v) => `$${Math.round(v / 1000)}K`}
+                      maxLines={TOP_N}
+                    />
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -433,85 +460,93 @@ export default function SalaryEmployment() {
                 />
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Industry
-                        </th>
-                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Employment
-                        </th>
-                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Median Salary
-                        </th>
-                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Trend (YoY)
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {industriesTable.length > 0 ? (
-                        industriesTable.map((ind) => (
-                          <tr
-                            key={ind.id}
-                            className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
-                          >
-                            <td className="py-3 px-4 font-medium">{ind.name}</td>
-                            <td className="py-3 px-4 text-right text-muted-foreground">
-                              {fmtK(ind.employment)}
-                            </td>
-                            <td className="py-3 px-4 text-right text-cyan">
-                              ${ind.medianSalary.toLocaleString()}
-                            </td>
-                            <td
-                              className={`py-3 px-4 text-right font-medium ${
-                                ind.trend >= 0 ? "text-green-500" : "text-coral"
-                              }`}
-                            >
-                              {ind.trend >= 0 ? "+" : ""}
-                              {ind.trend.toFixed(2)}%
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td
-                            colSpan={4}
-                            className="py-8 px-4 text-center text-sm text-muted-foreground"
-                          >
-                            {searchQuery.trim()
-                              ? `No industries found for "${searchQuery.trim()}".`
-                              : "No industries found."}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    Page {industryPage} of {totalIndustryPages}
-                  </p>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={loading || industryPage <= 1}
-                      onClick={() => setIndustryPage((p) => Math.max(1, p - 1))}
-                    >
-                      Prev
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={loading || industryPage >= totalIndustryPages}
-                      onClick={() => setIndustryPage((p) => Math.min(totalIndustryPages, p + 1))}
-                    >
-                      Next
-                    </Button>
+                {loading && industriesTable.length === 0 ? (
+                  <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+                    Loading industry comparison data...
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Industry
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Employment
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Median Salary
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Trend (YoY)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {industriesTable.length > 0 ? (
+                            industriesTable.map((ind) => (
+                              <tr
+                                key={ind.id}
+                                className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
+                              >
+                                <td className="py-3 px-4 font-medium">{ind.name}</td>
+                                <td className="py-3 px-4 text-right text-muted-foreground">
+                                  {fmtK(ind.employment)}
+                                </td>
+                                <td className="py-3 px-4 text-right text-cyan">
+                                  ${ind.medianSalary.toLocaleString()}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-right font-medium ${
+                                    ind.trend >= 0 ? "text-green-500" : "text-coral"
+                                  }`}
+                                >
+                                  {ind.trend >= 0 ? "+" : ""}
+                                  {ind.trend.toFixed(2)}%
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                className="py-8 px-4 text-center text-sm text-muted-foreground"
+                              >
+                                {searchQuery.trim()
+                                  ? `No industries found for "${searchQuery.trim()}".`
+                                  : "No industries found."}
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        Page {industryPage} of {totalIndustryPages}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          disabled={loading || industryPage <= 1}
+                          onClick={() => setIndustryPage((p) => Math.max(1, p - 1))}
+                        >
+                          Prev
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={loading || industryPage >= totalIndustryPages}
+                          onClick={() => setIndustryPage((p) => Math.min(totalIndustryPages, p + 1))}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -526,13 +561,19 @@ export default function SalaryEmployment() {
                   />
                 </CardHeader>
                 <CardContent>
-                  <HorizontalBarChart
-                    data={jobSalaryData}
-                    showSecondary
-                    primaryLabel="Employment"
-                    secondaryLabel="Median Salary"
-                    formatValue={(v) => fmtK(v)}
-                  />
+                  {jobTimeSeriesLoading ? (
+                    <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                      Loading job data...
+                    </div>
+                  ) : (
+                    <HorizontalBarChart
+                      data={jobSalaryData}
+                      showSecondary
+                      primaryLabel="Employment"
+                      secondaryLabel="Median Salary"
+                      formatValue={(v) => fmtK(v)}
+                    />
+                  )}
                 </CardContent>
               </Card>
 
@@ -544,14 +585,24 @@ export default function SalaryEmployment() {
                   />
                 </CardHeader>
                 <CardContent>
-                  <MultiLineChart
-                    data={jobMultiLineData}
-                    xAxisKey="year"
-                    lines={jobLines}
-                    height={350}
-                    maxLines={TOP_N}
-                    formatYAxis={(v) => fmtK(v)}
-                  />
+                  {jobTimeSeriesLoading ? (
+                    <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                      Loading employment trend data...
+                    </div>
+                  ) : jobMultiLineData.length === 0 || jobLines.length === 0 ? (
+                    <div className="flex items-center justify-center h-[350px] text-muted-foreground">
+                      No employment trend data available
+                    </div>
+                  ) : (
+                    <MultiLineChart
+                      data={jobMultiLineData}
+                      xAxisKey="year"
+                      lines={jobLines}
+                      height={350}
+                      maxLines={TOP_N}
+                      formatYAxis={(v) => fmtK(v)}
+                    />
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -564,85 +615,93 @@ export default function SalaryEmployment() {
                 />
               </CardHeader>
               <CardContent>
-                <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-border">
-                        <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Job Title
-                        </th>
-                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Employment
-                        </th>
-                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Median Salary
-                        </th>
-                        <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                          Trend (YoY)
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {jobsTable.length > 0 ? (
-                        jobsTable.map((j) => (
-                          <tr
-                            key={`${j.occ_code}-${j.occ_title}`}
-                            className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
-                          >
-                            <td className="py-3 px-4 font-medium">{j.occ_title}</td>
-                            <td className="py-3 px-4 text-right text-muted-foreground">
-                              {fmtK(j.employment)}
-                            </td>
-                            <td className="py-3 px-4 text-right text-cyan">
-                              ${j.medianSalary.toLocaleString()}
-                            </td>
-                            <td
-                              className={`py-3 px-4 text-right font-medium ${
-                                j.trend >= 0 ? "text-green-500" : "text-coral"
-                              }`}
-                            >
-                              {j.trend >= 0 ? "+" : ""}
-                              {j.trend.toFixed(2)}%
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td
-                            colSpan={4}
-                            className="py-8 px-4 text-center text-sm text-muted-foreground"
-                          >
-                            {searchQuery.trim()
-                              ? `No jobs found for "${searchQuery.trim()}".`
-                              : "No jobs found."}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">
-                    Page {jobPage} of {totalJobPages}
-                  </p>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={loading || jobPage <= 1}
-                      onClick={() => setJobPage((p) => Math.max(1, p - 1))}
-                    >
-                      Prev
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={loading || jobPage >= totalJobPages}
-                      onClick={() => setJobPage((p) => Math.min(totalJobPages, p + 1))}
-                    >
-                      Next
-                    </Button>
+                {loading && jobsTable.length === 0 ? (
+                  <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+                    Loading job comparison data...
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Job Title
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Employment
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Median Salary
+                            </th>
+                            <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
+                              Trend (YoY)
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {jobsTable.length > 0 ? (
+                            jobsTable.map((j) => (
+                              <tr
+                                key={`${j.occ_code}-${j.occ_title}`}
+                                className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
+                              >
+                                <td className="py-3 px-4 font-medium">{j.occ_title}</td>
+                                <td className="py-3 px-4 text-right text-muted-foreground">
+                                  {fmtK(j.employment)}
+                                </td>
+                                <td className="py-3 px-4 text-right text-cyan">
+                                  ${j.medianSalary.toLocaleString()}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-right font-medium ${
+                                    j.trend >= 0 ? "text-green-500" : "text-coral"
+                                  }`}
+                                >
+                                  {j.trend >= 0 ? "+" : ""}
+                                  {j.trend.toFixed(2)}%
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                className="py-8 px-4 text-center text-sm text-muted-foreground"
+                              >
+                                {searchQuery.trim()
+                                  ? `No jobs found for "${searchQuery.trim()}".`
+                                  : "No jobs found."}
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        Page {jobPage} of {totalJobPages}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="secondary"
+                          disabled={loading || jobPage <= 1}
+                          onClick={() => setJobPage((p) => Math.max(1, p - 1))}
+                        >
+                          Prev
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          disabled={loading || jobPage >= totalJobPages}
+                          onClick={() => setJobPage((p) => Math.min(totalJobPages, p + 1))}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -651,4 +710,3 @@ export default function SalaryEmployment() {
     </DashboardLayout>
   );
 }
-
