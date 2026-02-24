@@ -445,6 +445,9 @@ class SkillRepo:
     # -------------------------
 # NEW: Get Co-occurring Skills with Correlation Analysis
 # -------------------------
+    # -------------------------
+# Get Co-occurring Skills with Correlation Analysis - FIXED Chi-Square
+# -------------------------
     async def get_co_occurring_skills_with_correlation(
         self, 
         skill_name: str, 
@@ -566,7 +569,7 @@ class SkillRepo:
                         ELSE 0
                     END AS lift
                 
-                // Calculate CHI-SQUARE: ((ad - bc)^2 * N) / ((a+b)(c+d)(a+c)(b+d))
+                // Calculate CHI-SQUARE correctly using the 2x2 contingency table
                 WITH s2, 
                     co_occurrence_frequency,
                     total_jobs_for_s2,
@@ -578,18 +581,21 @@ class SkillRepo:
                     lift,
                     target_jobs,
                     all_jobs,
+                    // Contingency table values:
+                    // a = jobs with BOTH skills (co_occurrence_frequency)
+                    // b = jobs with target skill ONLY (target_jobs - co_occurrence_frequency)
+                    // c = jobs with other skill ONLY (total_jobs_for_s2 - co_occurrence_frequency)
+                    // d = jobs with NEITHER skill (all_jobs - target_jobs - total_jobs_for_s2 + co_occurrence_frequency)
                     co_occurrence_frequency AS a,
                     target_jobs - co_occurrence_frequency AS b,
                     total_jobs_for_s2 - co_occurrence_frequency AS c,
-                    all_jobs - (co_occurrence_frequency + (target_jobs - co_occurrence_frequency) + (total_jobs_for_s2 - co_occurrence_frequency)) AS d,
-                    CASE 
-                        WHEN target_jobs > 0 AND total_jobs_for_s2 > 0 AND all_jobs > 0
-                        THEN (target_jobs + total_jobs_for_s2 - co_occurrence_frequency) <= all_jobs
-                        ELSE false
-                    END AS is_valid
+                    all_jobs - target_jobs - total_jobs_for_s2 + co_occurrence_frequency AS d
                 
-                // Calculate chi-square safely
+                // Calculate chi-square using formula: χ² = Σ((O-E)²/E)
+                // First calculate expected frequencies under independence
                 WITH s2, 
+                    a, b, c, d,
+                    all_jobs,
                     co_occurrence_frequency,
                     total_jobs_for_s2,
                     avg_importance,
@@ -598,11 +604,35 @@ class SkillRepo:
                     in_demand,
                     co_occurrence_rate,
                     lift,
-                    a, b, c, d, all_jobs,
+                    target_jobs,
+                    // Expected frequencies
+                    (toFloat(target_jobs) * toFloat(total_jobs_for_s2)) / toFloat(all_jobs) AS expected_a,
+                    (toFloat(target_jobs) * toFloat(all_jobs - total_jobs_for_s2)) / toFloat(all_jobs) AS expected_b,
+                    (toFloat(all_jobs - target_jobs) * toFloat(total_jobs_for_s2)) / toFloat(all_jobs) AS expected_c,
+                    (toFloat(all_jobs - target_jobs) * toFloat(all_jobs - total_jobs_for_s2)) / toFloat(all_jobs) AS expected_d
+                
+                // Calculate chi-square safely, avoiding division by zero
+                WITH s2, 
+                    a, b, c, d,
+                    expected_a, expected_b, expected_c, expected_d,
+                    all_jobs,
+                    co_occurrence_frequency,
+                    total_jobs_for_s2,
+                    avg_importance,
+                    avg_level,
+                    hot_technology,
+                    in_demand,
+                    co_occurrence_rate,
+                    lift,
+                    target_jobs,
+                    // Calculate chi-square = sum of (observed - expected)² / expected
                     CASE 
-                        WHEN is_valid AND (a + b) > 0 AND (c + d) > 0 AND (a + c) > 0 AND (b + d) > 0
-                        THEN (toFloat((a * d) - (b * c)) * toFloat((a * d) - (b * c)) * toFloat(all_jobs)) / 
-                            (toFloat((a + b)) * toFloat((c + d)) * toFloat((a + c)) * toFloat((b + d)))
+                        WHEN expected_a > 0 AND expected_b > 0 AND expected_c > 0 AND expected_d > 0
+                        THEN 
+                            (toFloat(a - expected_a) * toFloat(a - expected_a)) / expected_a +
+                            (toFloat(b - expected_b) * toFloat(b - expected_b)) / expected_b +
+                            (toFloat(c - expected_c) * toFloat(c - expected_c)) / expected_c +
+                            (toFloat(d - expected_d) * toFloat(d - expected_d)) / expected_d
                         ELSE 0
                     END AS chi_square
                 
@@ -617,6 +647,7 @@ class SkillRepo:
                     co_occurrence_rate,
                     lift,
                     chi_square,
+                    a, b, c, d,
                     CASE 
                         WHEN chi_square > 3.84 THEN true
                         ELSE false
@@ -642,8 +673,8 @@ class SkillRepo:
                     lift,
                     chi_square,
                     is_significant,
-                    correlation_type
-                // FIXED: Order by lift first, then by frequency (raw count) to ensure distinct ordering
+                    correlation_type,
+                    a, b, c, d  // Include these for debugging
                 ORDER BY lift DESC, co_occurrence_frequency DESC, co_occurrence_rate DESC
                 LIMIT $query_limit
                 """,
@@ -680,25 +711,22 @@ class SkillRepo:
                         avg_level = round(float(avg_level) * 14.3, 1)
                     except:
                         avg_level = 0
-                    else:
-                        avg_level = 0
+                else:
+                    avg_level = 0
                 
-                # Get hot_technology and in_demand flags - ensure they're booleans
+                # Get hot_technology and in_demand flags
                 hot_technology = record.get("hot_technology", False)
                 in_demand = record.get("in_demand", False)
                 
-                # Ensure they're actual booleans
                 if hot_technology is None:
                     hot_technology = False
                 if in_demand is None:
                     in_demand = False
                 
-                # Ensure co_occurrence_rate is never None
                 co_occurrence_rate = record.get("co_occurrence_rate")
                 if co_occurrence_rate is None:
                     co_occurrence_rate = 0
                 
-                # Get lift and chi-square values
                 lift = record.get("lift", 0)
                 if lift is None:
                     lift = 0
@@ -707,6 +735,17 @@ class SkillRepo:
                     chi_square = 0
                 is_significant = record.get("is_significant", False)
                 correlation_type = record.get("correlation_type", "neutral")
+                
+                # Debug print for small samples
+                a = record.get("a", 0)
+                b = record.get("b", 0)
+                c = record.get("c", 0)
+                d = record.get("d", 0)
+                
+                # If any expected cell is too small, chi-square might be unreliable
+                if a + b + c + d < 20 or a < 5 or b < 5 or c < 5 or d < 5:
+                    # Mark as not significant if sample too small
+                    is_significant = False
                 
                 skills.append({
                     "id": skill_id,
@@ -727,7 +766,7 @@ class SkillRepo:
                     "correlation_type": correlation_type
                 })
             
-            # Remove any remaining duplicates just in case (by name)
+            # Remove duplicates
             unique_skills = []
             seen_names = set()
             for skill in skills:
@@ -735,7 +774,6 @@ class SkillRepo:
                     seen_names.add(skill["name"])
                     unique_skills.append(skill)
             
-            # If limit is provided, apply it, otherwise return all
             if limit is not None:
                 return unique_skills[:limit]
             else:
@@ -819,7 +857,7 @@ class SkillRepo:
     async def get_top_jobs_for_skill(
         self,
         skill_name: str,
-        limit: int = 6
+        limit: int = 6  # This parameter is now IGNORED - we return ALL jobs
     ) -> List[Dict[str, Any]]:
         """
         Get ALL jobs that require this skill - returns jobs without sorting by importance
@@ -868,10 +906,9 @@ class SkillRepo:
                     COALESCE(r.Hot_Technology, false) AS hot_technology,
                     COALESCE(r.In_Demand, false) AS in_demand
                 ORDER BY j.title  // Simple alphabetical order - we'll sort by employment after getting BLS data
-                LIMIT $limit
-                """,
-                skill_name=skill_name,
-                limit=query_limit
+                """,  # REMOVED THE LIMIT CLAUSE
+                skill_name=skill_name
+                # REMOVED: limit=query_limit
             )
             
             jobs = []
@@ -1048,7 +1085,8 @@ class SkillRepo:
             network_graph_task = self.get_skill_network_graph(
                 skill_name, 10, include_correlation=include_correlations
             )
-            top_jobs_task = self.get_top_jobs_for_skill(skill_name, 6)
+            # Get ALL jobs from Neo4j
+            top_jobs_task = self.get_top_jobs_for_skill(skill_name, limit=1000)
             
             # Gather tasks
             tasks = [metrics_task, usage_task, tech_flags_task, co_occurring_task, network_graph_task, top_jobs_task]
@@ -1105,6 +1143,8 @@ class SkillRepo:
                 print(f"Error getting correlations: {correlations}")
                 correlations = None
             
+            print(f"📊 Retrieved {len(top_jobs)} jobs from Neo4j for skill: {skill_name}")
+            
             # Format metrics for UI - CONDITIONAL BASED ON SKILL TYPE
             ui_metrics = []
             
@@ -1150,16 +1190,18 @@ class SkillRepo:
                     }
                 ])
             
-            # Add jobs requiring metric for all skills
+            # Add jobs requiring metric for all skills - BUT USE THE ACTUAL COUNT OF JOBS WE RETRIEVED
+            # This will be filtered later when we add BLS data, but at least it matches what we're showing
+            jobs_requiring_count = len(top_jobs)
             ui_metrics.append({
                 "title": "Jobs Requiring",
-                "value": usage.get("jobs_requiring", 0),
+                "value": jobs_requiring_count,
                 "format": "fmtK",
                 "color": "green"
             })
             
-            # Format usage data for donut chart
-            usage_percentage = usage.get("percentage", 0)
+            # Format usage data for donut chart - UPDATE THIS TOO
+            usage_percentage = round((jobs_requiring_count / usage.get("total_jobs", 1)) * 100, 1) if usage.get("total_jobs", 0) > 0 else 0
             usage_data = [
                 {"name": "Jobs Requiring", "value": usage_percentage, "color": "hsl(186 100% 50%)"},
                 {"name": "Jobs Not Requiring", "value": 100 - usage_percentage, "color": "hsl(0 0% 25%)"}
@@ -1184,7 +1226,7 @@ class SkillRepo:
                 "co_occurring_skills": co_occurring,
                 "network_graph": network_graph,
                 "top_jobs": top_jobs,
-                "total_jobs_count": usage.get("total_jobs", 0)
+                "total_jobs_count": jobs_requiring_count  # Use the filtered count
             }
             
             # Add correlation analysis if requested and available

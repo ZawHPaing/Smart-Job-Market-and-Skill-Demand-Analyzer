@@ -131,7 +131,7 @@ const TrendsForecasts = () => {
     
     return industries.map((industry, index) => ({
       key: industry,
-      name: industry.length > 25 ? industry.substring(0, 25) + '...' : industry,
+      name: industry, // keep full name for tooltip/hover
       color: CHART_COLORS[index % CHART_COLORS.length]
     }));
   }, [forecastData]);

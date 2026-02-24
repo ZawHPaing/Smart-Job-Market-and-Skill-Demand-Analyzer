@@ -163,6 +163,16 @@ async def get_skill_detail(
     skill_detail["top_jobs"] = enhanced_jobs  # Store ALL jobs
     skill_detail["year"] = year  # Add year to response
     
+    # Update the KPI to match the number of jobs we're actually displaying
+    # Find the "Jobs Requiring" metric and update its value
+    for metric in skill_detail["metrics"]:
+        if metric["title"] == "Jobs Requiring":
+            metric["value"] = len(enhanced_jobs)
+            break
+    
+    # Update the total_jobs_count to match
+    skill_detail["total_jobs_count"] = len(enhanced_jobs)
+    
     response = SkillDetailResponse(**skill_detail)
     cache.set(cache_key, response.dict())
     return response
@@ -189,8 +199,8 @@ async def get_skill_jobs(
     
     skill_name = skill_id.replace("_", " ").replace("-", " ").title()
     
-    # Get ALL jobs from Neo4j (the repo now returns up to 1000 jobs)
-    jobs = await repo.get_top_jobs_for_skill(skill_name, limit=limit)  # limit parameter is now ignored in repo
+    # Get ALL jobs from Neo4j (the method now returns all jobs regardless of limit param)
+    jobs = await repo.get_top_jobs_for_skill(skill_name, limit=limit)  # limit param is ignored in the method
     print(f"📊 Received {len(jobs)} jobs from Neo4j for {skill_name} in /jobs endpoint")
     
     # Enhance with BLS data for the selected year
@@ -211,12 +221,13 @@ async def get_skill_jobs(
     enhanced_jobs.sort(key=lambda x: x.get("employment", 0) or 0, reverse=True)
     
     # Log top jobs for debugging
-    print(f"📊 Sorted jobs for {skill_name}:")
+    print(f"📊 Sorted jobs for {skill_name}: got {len(enhanced_jobs)} jobs with employment data")
     for i, job in enumerate(enhanced_jobs[:5]):
         print(f"  {i+1}. {job['title']}: {job.get('employment', 0):,} employed")
     
-    # Limit to requested number
+    # Apply the requested limit AFTER sorting
     result = enhanced_jobs[:limit]
+    print(f"📤 Returning {len(result)} jobs (limited to {limit})")
     
     cache.set(cache_key, result)
     return result
