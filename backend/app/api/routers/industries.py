@@ -265,25 +265,30 @@ async def top_job(
 async def jobs(
     naics: str,
     year: int = Query(...),
-    limit: int = Query(200, ge=1, le=5000),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: "AgnosticDatabase" = Depends(get_db),
 ) -> IndustryJobsResponse:
-    cache_key = f"industries_onet_v2_{naics}_jobs_{year}_{limit}"
+    cache_key = f"industries_onet_v2_{naics}_jobs_{year}_{page}_{page_size}"
     cached = cache.get(cache_key)
     if cached:
         return IndustryJobsResponse(**cached)
     
     repo = IndustryRepo(db)
-    rows = await repo.jobs_in_industry(naics, year)
+    
+    # Calculate skip for pagination
+    skip = (page - 1) * page_size
+    
+    rows, total = await repo.jobs_in_industry(naics, year, limit=page_size, skip=skip)
     naics_title = rows[0]["naics_title"] if rows else await repo.get_naics_title(naics, year)
-
-    rows = rows[:limit]
 
     response = IndustryJobsResponse(
         naics=naics,
         naics_title=naics_title,
         year=year,
-        count=len(rows),
+        page=page,
+        page_size=page_size,
+        total=total,
         jobs=[JobDetail(**r) for r in rows],
     )
     

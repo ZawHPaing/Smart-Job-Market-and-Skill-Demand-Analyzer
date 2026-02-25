@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import List, Optional
 from typing import Any, Dict, List
 from pydantic import BaseModel
+import math
 
 
 class IndustryItem(BaseModel):
@@ -28,8 +29,14 @@ class IndustryJobsResponse(BaseModel):
     naics: str
     naics_title: str
     year: int
-    count: int
+    page: int
+    page_size: int
+    total: int
     jobs: List[JobDetail]
+    
+    @property
+    def total_pages(self) -> int:
+        return math.ceil(self.total / self.page_size) if self.total > 0 else 1
 
 
 class IndustryTopJobsResponse(BaseModel):

@@ -194,15 +194,46 @@ class IndustryRepo:
     # -------------------------
     # jobs (exclude 00-0000)
     # -------------------------
-    async def jobs_in_industry(self, naics: str, year: int) -> List[Dict[str, Any]]:
+    async def jobs_in_industry(
+        self, 
+        naics: str, 
+        year: int, 
+        limit: Optional[int] = None, 
+        skip: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get jobs in an industry with pagination support.
+        Returns (jobs, total_count)
+        """
         onet_codes = await self._get_onet_bls_codes()
         if not onet_codes:
-            return []
+            return [], 0
 
+        # First, get total count
+        count_query = {
+            "year": int(year), 
+            "naics": naics, 
+            "occ_code": {"$in": list(onet_codes)}
+        }
+        total = await self.db["bls_oews"].count_documents(count_query)
+
+        # Build query for jobs
+        query = {
+            "year": int(year), 
+            "naics": naics, 
+            "occ_code": {"$in": list(onet_codes)}
+        }
+        
         cursor = self.db["bls_oews"].find(
-            {"year": int(year), "naics": naics, "occ_code": {"$in": list(onet_codes)}},
+            query,
             {"occ_code": 1, "occ_title": 1, "tot_emp": 1, "a_median": 1, "naics_title": 1, "_id": 0},
-        )
+        ).sort([("tot_emp", -1)])  # Sort by employment descending
+
+        # Apply pagination if skip and limit are provided
+        if skip is not None:
+            cursor = cursor.skip(skip)
+        if limit is not None:
+            cursor = cursor.limit(limit)
 
         rows: List[Dict[str, Any]] = []
         async for doc in cursor:
@@ -218,15 +249,22 @@ class IndustryRepo:
                 }
             )
 
-        rows.sort(key=lambda x: x["employment"], reverse=True)
-        return rows
+        return rows, total
 
     async def top_jobs_in_industry(self, naics: str, year: int, limit: int) -> Tuple[str, List[Dict[str, Any]]]:
-        rows = await self.jobs_in_industry(naics, year)
+        """
+        Get top jobs in an industry.
+        Now handles the tuple return from jobs_in_industry.
+        """
+        rows, total = await self.jobs_in_industry(naics, year)  # Get both rows and total
         naics_title = rows[0]["naics_title"] if rows else await self.get_naics_title(naics, year)
         return naics_title, rows[: max(1, int(limit))]
 
     async def top_job_in_industry(self, naics: str, year: int) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """
+        Get the top job in an industry.
+        Now handles the tuple return from jobs_in_industry.
+        """
         title, rows = await self.top_jobs_in_industry(naics, year, limit=1)
         return title, (rows[0] if rows else None)
 

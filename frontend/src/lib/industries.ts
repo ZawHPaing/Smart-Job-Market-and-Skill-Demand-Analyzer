@@ -37,7 +37,9 @@ export type IndustryJobsResponse = {
   naics: string;
   naics_title: string;
   year: number;
-  count: number;
+  page: number;
+  page_size: number;
+  total: number;
   jobs: JobDetail[];
 };
 
@@ -144,26 +146,30 @@ export const IndustriesAPI = {
   topJobs: (naics: string, year: number, limit = 6) =>
     apiGet<IndustryTopJobsResponse>(`/industries/${encodeURIComponent(naics)}/top-jobs`, { year, limit }),
 
-  jobs: (naics: string, year: number, limit = 200) =>
-    apiGet<IndustryJobsResponse>(`/industries/${encodeURIComponent(naics)}/jobs`, { year, limit }),
+  jobs: (naics: string, year: number, page = 1, page_size = 50) =>
+    apiGet<IndustryJobsResponse>(`/industries/${encodeURIComponent(naics)}/jobs`, { 
+      year, 
+      page, 
+      page_size 
+    }),
 
   summary: (naics: string, year_from = 2011, year_to = 2024) =>
     apiGet<IndustrySummaryResponse>(`/industries/${encodeURIComponent(naics)}/summary`, { year_from, year_to }),
 
-  // ✅ new endpoints (require backend routes)
+  // new endpoints
   top: (year: number, limit = 6, by: "employment" | "salary" = "employment") =>
     apiGet<IndustryTopResponse>("/industries/top", { year, limit, by }),
 
-  topTrends: (year_from = 2019, year_to = 2024, limit = 10) =>  // Changed from 3 to 10
-  apiGet<IndustryTopTrendsResponse>("/industries/top-trends", { year_from, year_to, limit }),
+  topTrends: (year_from = 2019, year_to = 2024, limit = 10) =>
+    apiGet<IndustryTopTrendsResponse>("/industries/top-trends", { year_from, year_to, limit }),
 
   composition: (year: number, limit = 6) =>
     apiGet<IndustryCompositionResponse>("/industries/composition", { year, limit }),
 
   compositionTopOccupations: (year: number, industries_limit = 6, top_n_occ = 3) =>
-  apiGet<IndustryTopOccCompositionResponse>("/industries/composition-top-occupations", {
-    year,
-    industries_limit,
-    top_n_occ,
-  }),
+    apiGet<IndustryTopOccCompositionResponse>("/industries/composition-top-occupations", {
+      year,
+      industries_limit,
+      top_n_occ,
+    }),
 };

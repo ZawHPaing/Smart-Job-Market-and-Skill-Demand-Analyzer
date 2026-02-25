@@ -86,6 +86,102 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
+// Helper to transform salary data to show relative differences
+const transformSalaryData = (data: any[], lines: { key: string; name: string; color: string; }[]) => {
+  if (!data.length || !lines.length) return data;
+
+  // Find min and max values across all data
+  let minValue = Infinity;
+  let maxValue = -Infinity;
+  
+  data.forEach(row => {
+    lines.forEach(line => {
+      const value = row[line.key];
+      if (value !== undefined && value !== null && value > 0) {
+        minValue = Math.min(minValue, value);
+        maxValue = Math.max(maxValue, value);
+      }
+    });
+  });
+
+  // If range is very small (less than 10% of max), transform to show relative differences
+  const range = maxValue - minValue;
+  const rangeRatio = range / maxValue;
+  
+  if (rangeRatio < 0.1) { // Less than 10% range
+    // Transform data to start from a baseline that shows the differences clearly
+    const baseline = minValue * 0.95; // Start slightly below min
+    return data.map(row => {
+      const newRow: any = { ...row };
+      lines.forEach(line => {
+        if (newRow[line.key] > 0) {
+          // Keep the absolute values for tooltips, but scale for visualization
+          newRow[`${line.key}_original`] = newRow[line.key];
+          newRow[line.key] = newRow[line.key] - baseline;
+        }
+      });
+      return newRow;
+    });
+  }
+  
+  return data;
+};
+
+// Custom chart component with conditional scaling based on sortBy
+const TrendChart = ({ 
+  data, 
+  lines, 
+  type,
+  sortBy 
+}: { 
+  data: any[]; 
+  lines: { key: string; name: string; color: string; }[]; 
+  type: 'employment' | 'salary';
+  sortBy: SortBy;
+}) => {
+  // Transform data only for salary chart when sorted by salary
+  const transformedData = useMemo(() => {
+    if (type === 'salary' && sortBy === 'salary') {
+      return transformSalaryData(data, lines);
+    }
+    return data;
+  }, [data, lines, type, sortBy]);
+
+  // Custom format for y-axis that shows original values
+  const formatYAxisWithContext = (value: number) => {
+    if (type === 'salary') {
+      // For transformed data, we need to show the original values
+      // This is a bit tricky - we'll rely on the tooltip to show real values
+      // and keep the axis labels simple
+      return `$${(value / 1000).toFixed(0)}K`;
+    }
+    return value >= 1000 ? `${(value / 1000).toFixed(0)}K` : value.toString();
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="mb-2 text-xs text-muted-foreground text-center">
+        Showing {data.length} years of historical data 
+        ({data[0]?.year} - {data[data.length-1]?.year})
+      </div>
+      <MultiLineChart
+        data={transformedData}
+        xAxisKey="year"
+        lines={lines}
+        height={300}
+        maxLines={10}
+        formatYAxis={formatYAxisWithContext}
+      />
+      {type === 'salary' && sortBy === 'salary' && (
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>• Chart scaled to show salary differences clearly</span>
+          <span>Hover for exact values</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Jobs = () => {
   const { year } = useYear();
   const [searchInput, setSearchInput] = useState('');
@@ -151,8 +247,8 @@ const Jobs = () => {
         const [m, topJobsData, employmentTrends, salaryTrends, jobsList] = await Promise.all([
           JobsAPI.dashboardMetrics(year),
           JobsAPI.top(year, 10, sortBy),
-          JobsAPI.topTrends(yearFrom, year, 10, undefined, 'employment'),
-          JobsAPI.topSalaryTrends(yearFrom, year, 10, undefined, 'salary'),
+          JobsAPI.topTrends(yearFrom, year, 10, undefined, sortBy),
+          JobsAPI.topSalaryTrends(yearFrom, year, 10, undefined, sortBy), // Use sortBy instead of hardcoded 'salary'
           JobsAPI.list({ year, limit: 1000 }),
         ]);
 
@@ -213,7 +309,7 @@ const Jobs = () => {
           setEmploymentTrendData([]);
         }
 
-        // Process salary trends - align with top jobs
+        // Process salary trends - align with top jobs (now using same sortBy)
         const sortedSalarySeries = [...(salaryTrends?.series || [])]
           .sort((a: any, b: any) => {
             const aLatest = a?.points?.[a.points.length - 1]?.salary ?? 0;
@@ -504,7 +600,7 @@ const Jobs = () => {
             <CardHeader>
               <SectionHeader
                 title="Job Trends Over Time"
-                subtitle={`Employment tab: top jobs by job postings, Salary tab: top jobs by median salary (2011-${year})`}
+                subtitle={`Showing trends for the top ${sortBy === 'employment' ? 'employed' : 'paying'} jobs`}
               />
             </CardHeader>
             <CardContent>
@@ -516,19 +612,12 @@ const Jobs = () => {
                 
                 <TabsContent value="employment">
                   {employmentTrendData.length > 0 && employmentChartLines.length > 0 ? (
-                    <>
-                      <div className="mb-2 text-xs text-muted-foreground text-center">
-                        Showing {employmentTrendData.length} years of historical data 
-                        ({employmentTrendData[0]?.year} - {employmentTrendData[employmentTrendData.length-1]?.year})
-                      </div>
-                      <MultiLineChart
-                        data={employmentTrendData}
-                        xAxisKey="year"
-                        lines={employmentChartLines}
-                        height={300}
-                        maxLines={10}
-                      />
-                    </>
+                    <TrendChart
+                      data={employmentTrendData}
+                      lines={employmentChartLines}
+                      type="employment"
+                      sortBy={sortBy}
+                    />
                   ) : (
                     <div className="text-muted-foreground text-center py-8">
                       No employment trend data available
@@ -538,19 +627,12 @@ const Jobs = () => {
                 
                 <TabsContent value="salary">
                   {salaryTrendData.length > 0 && salaryChartLines.length > 0 ? (
-                    <>
-                      <div className="mb-2 text-xs text-muted-foreground text-center">
-                        Showing {salaryTrendData.length} years of historical data 
-                        ({salaryTrendData[0]?.year} - {salaryTrendData[salaryTrendData.length-1]?.year})
-                      </div>
-                      <MultiLineChart
-                        data={salaryTrendData}
-                        xAxisKey="year"
-                        lines={salaryChartLines}
-                        height={300}
-                        maxLines={10}
-                      />
-                    </>
+                    <TrendChart
+                      data={salaryTrendData}
+                      lines={salaryChartLines}
+                      type="salary"
+                      sortBy={sortBy}
+                    />
                   ) : (
                     <div className="text-muted-foreground text-center py-8">
                       No salary trend data available

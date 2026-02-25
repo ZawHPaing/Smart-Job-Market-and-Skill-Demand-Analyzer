@@ -429,7 +429,7 @@ export default function Home() {
               <SectionHeader
                 title="Top Job Titles & Salary"
                 subtitle="Cross-industry job titles by employment (Top 10)"
-                action={{ label: "See More", href: "/industries" }}
+                action={{ label: "See More", href: "/jobs" }}
               />
             </CardHeader>
             <CardContent className="min-h-[500px]">
